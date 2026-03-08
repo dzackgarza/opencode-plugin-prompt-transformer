@@ -13,7 +13,11 @@ The plugin uses the canonical prompt assets in `~/ai/prompts/micro_agents/prompt
 and the canonical Python interfaces in `~/ai/scripts/llm` via:
 
 - `scripts/run_micro_agent.py` for classifier execution
+- `response_template.md` for the injected post-classification behavior
 - `scripts.llm.bridge` for render-only Jinja templating
+
+The historical `tiers/` directory is deprecated. Runtime injection now renders
+the canonical `response_template.md` directly.
 
 Local checks:
 
