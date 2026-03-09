@@ -1,15 +1,19 @@
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/I2I57UKJ8)
+
 # prompt-router
 
-OpenCode plugin that classifies the latest user prompt into a routing tier and rewrites the user message through `chat.message`.
+Classify user prompts into routing tiers and rewrite messages with this OpenCode plugin. It uses `chat.message` to transform user text.
 
 ## Install
+
+Run these commands to install:
 
 ```bash
 cd /home/dzack/opencode-plugins/prompt-router
 just install
 ```
 
-OpenCode plugin registration via `file:`:
+Register the plugin via `file:` in your OpenCode config:
 
 ```json
 {
@@ -19,24 +23,26 @@ OpenCode plugin registration via `file:`:
 }
 ```
 
-Sample local config: [`prompt-router/.config/opencode.json`](/home/dzack/opencode-plugins/prompt-router/.config/opencode.json)
+View a sample configuration here: [`prompt-router/.config/opencode.json`](/home/dzack/opencode-plugins/prompt-router/.config/opencode.json)
 
-MCP: not provided. This package is a chat-transform hook, not a tool server.
+**MCP**: None. This package provides a chat-transform hook rather than a tool server.
 
 ## Agent Surface
 
-This plugin exposes no tool names. It intercepts chat messages and:
+This plugin intercepts chat messages without exposing tool names. It performs these actions:
 
-- reads the latest user text
-- classifies it into one of `model-self`, `knowledge`, `C`, `B`, `A`, `S`
-- injects rendered instructions from the canonical response template
+- **Reads** the latest user text.
+- **Classifies** input into tiers: `model-self`, `knowledge`, `C`, `B`, `A`, or `S`.
+- **Injects** instructions from the canonical response template.
 
 Dependencies:
 
-- Runtime: Bun, `@opencode-ai/plugin`, `yaml`
-- External local assets: `~/ai/prompts/...`, `~/ai/scripts/llm`
+- **Runtime**: Bun, `@opencode-ai/plugin`, `yaml`
+- **External local assets**: `~/ai/prompts/...`, `~/ai/scripts/llm`
 
 ## Checks
+
+Run checks with just:
 
 ```bash
 just typecheck
