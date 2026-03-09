@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { fauxMatch } from "../../src/index";
+import { fauxMatch } from "../../src/routing";
 
 describe("prompt-router faux rules", () => {
   it("matches each canonical prompt exactly", () => {
@@ -21,6 +21,10 @@ describe("prompt-router faux rules", () => {
 
   it("trims whitespace before matching", () => {
     expect(fauxMatch("  Describe every tool you have access to.  ")).toBe("model-self");
+  });
+
+  it("matches one-shot prompts wrapped in quotes", () => {
+    expect(fauxMatch('"Describe every tool you have access to."')).toBe("model-self");
   });
 
   it("returns null for partial, unknown, or case-mismatched prompts", () => {

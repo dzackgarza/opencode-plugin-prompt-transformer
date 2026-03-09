@@ -14,5 +14,6 @@
   "dependencies": {
     "@opencode-ai/plugin": "^1.2.20",
     "yaml": "^2.8.1"
-  }
+  },
+  "module": "./src/index.ts"
 }

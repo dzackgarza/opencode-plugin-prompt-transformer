@@ -1,10 +1,16 @@
 import { appendFileSync } from "fs";
-import { randomUUID } from "crypto";
 import { fileURLToPath } from "url";
 import { resolve, dirname } from "path";
 import type { Plugin } from "@opencode-ai/plugin";
-import type { TextPart, UserMessage } from "@opencode-ai/sdk";
+import type { TextPart } from "@opencode-ai/sdk";
 import { renderTemplate, runMicroAgent } from "./llm";
+import {
+  FAUX_RULES,
+  fauxMatch,
+  normalizePrompt,
+  ROUTING_PASSCODES,
+  type Tier,
+} from "./routing";
 
 const _dir = dirname(fileURLToPath(import.meta.url));
 const AI_ROOT = resolve(_dir, "../../../ai");
@@ -18,9 +24,6 @@ const RESPONSE_TEMPLATE_PATH = resolve(
   "prompts/micro_agents/prompt_difficulty_classifier/response_template.md",
 );
 
-type Tier = "model-self" | "knowledge" | "C" | "B" | "A" | "S";
-
-const SESSION_ID = process.env.OPENCODE_SESSION_ID ?? randomUUID();
 const LOG_PATH = "/var/sandbox/.prompt-router.log";
 
 function appendLog(entry: {
@@ -38,34 +41,7 @@ function appendLog(entry: {
   }
 }
 
-export const FAUX_RULES: Array<{ prompt: string; tier: Tier }> = [
-  { prompt: "Describe every tool you have access to.", tier: "model-self" },
-  { prompt: "What is the latest stable release of TypeScript?", tier: "knowledge" },
-  {
-    prompt:
-      "Create a file named router-poc-c.txt containing exactly: poc-baseline-c, then delete it.",
-    tier: "C",
-  },
-  {
-    prompt:
-      "For each .ts file in this directory, open it and print the name of every exported symbol.",
-    tier: "B",
-  },
-  { prompt: "Audit command-interceptor.ts for security vulnerabilities.", tier: "A" },
-  { prompt: "Design a plugin for tracking token usage per session.", tier: "S" },
-];
-
 const RESPONSE_TEMPLATE_BODY = await Bun.file(RESPONSE_TEMPLATE_PATH).text();
-
-export function fauxMatch(text: string): Tier | null {
-  const trimmed = text.trim();
-  for (const { prompt, tier } of FAUX_RULES) {
-    if (trimmed === prompt) {
-      return tier;
-    }
-  }
-  return null;
-}
 
 async function classify(
   text: string,
@@ -87,45 +63,47 @@ async function classify(
 
 export const PromptRouter: Plugin = async ({ client }) => {
   return {
-    "experimental.chat.messages.transform": async (_input, output) => {
-      if (!output.messages?.length) return;
-
+    "chat.message": async (input, output) => {
       try {
-        const lastUser = [...output.messages]
-          .reverse()
-          .find((message) => message.info.role === "user");
-        if (!lastUser) return;
-
-        const text = lastUser.parts
+        const text = output.parts
           .filter((part): part is TextPart => part.type === "text")
           .map((part) => part.text)
           .join(" ");
-        if (!text.trim()) return;
+        const normalizedText = normalizePrompt(text);
+        if (!normalizedText) return;
+        const textParts = output.parts.filter((part): part is TextPart => part.type === "text");
+        const firstTextPart = textParts[0];
+        if (!firstTextPart) return;
 
-        const classification = await classify(text);
+        const classification = await classify(normalizedText);
         if (!classification) return;
 
         const { tier, reasoning } = classification;
+        const probePrompt = FAUX_RULES.find(({ prompt, tier: probeTier }) =>
+          probeTier === tier && prompt === normalizedText,
+        )?.prompt;
         const instruction = await renderTemplate(
           RESPONSE_TEMPLATE_BODY,
-          { tier },
-          RESPONSE_TEMPLATE_PATH,
+          {
+            tier,
+            passcode: ROUTING_PASSCODES[tier],
+            probe_prompt: probePrompt ?? "",
+          },
         );
 
-        output.messages.push({
-          info: {
-            id: `router-${Date.now()}`,
-            role: "user",
-            sessionID: "",
-            time: { created: Date.now() },
-          } as UserMessage,
-          parts: [{ type: "text", text: instruction } as TextPart],
-        });
+        if (probePrompt) {
+          firstTextPart.text = instruction;
+          for (const part of textParts.slice(1)) {
+            part.ignored = true;
+          }
+        } else {
+          firstTextPart.text = `${instruction}\n\n${firstTextPart.text}`;
+        }
 
         appendLog({
           ts: new Date().toISOString(),
-          session_id: SESSION_ID,
-          prompt: text.slice(0, 500),
+          session_id: input.sessionID,
+          prompt: normalizedText.slice(0, 500),
           tier,
           reasoning,
           injected: true,

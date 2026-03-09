@@ -1,28 +1,44 @@
-# Prompt Router
+# prompt-router
 
-Standalone OpenCode plugin package for routing incoming user prompts into
-cognitive tiers before the main agent responds.
+OpenCode plugin that classifies the latest user prompt into a routing tier and rewrites the user message through `chat.message`.
 
-Registration path:
-
-```json
-"file:///home/dzack/opencode-plugins/prompt-router/src/index.ts"
-```
-
-The plugin uses the canonical prompt assets in `~/ai/prompts/micro_agents/prompt_difficulty_classifier/`
-and the canonical Python interfaces in `~/ai/scripts/llm` via:
-
-- `scripts/run_micro_agent.py` for classifier execution
-- `response_template.md` for the injected post-classification behavior
-- `scripts.llm.bridge` for render-only Jinja templating
-
-The historical `tiers/` directory is deprecated. Runtime injection now renders
-the canonical `response_template.md` directly.
-
-Local checks:
+## Install
 
 ```bash
 cd /home/dzack/opencode-plugins/prompt-router
-bunx tsc --noEmit
-bun test
+just install
+```
+
+OpenCode plugin registration via `file:`:
+
+```json
+{
+  "plugin": [
+    "file:///home/dzack/opencode-plugins/prompt-router/src/index.ts"
+  ]
+}
+```
+
+Sample local config: [`prompt-router/.config/opencode.json`](/home/dzack/opencode-plugins/prompt-router/.config/opencode.json)
+
+MCP: not provided. This package is a chat-transform hook, not a tool server.
+
+## Agent Surface
+
+This plugin exposes no tool names. It intercepts chat messages and:
+
+- reads the latest user text
+- classifies it into one of `model-self`, `knowledge`, `C`, `B`, `A`, `S`
+- injects rendered instructions from the canonical response template
+
+Dependencies:
+
+- Runtime: Bun, `@opencode-ai/plugin`, `yaml`
+- External local assets: `~/ai/prompts/...`, `~/ai/scripts/llm`
+
+## Checks
+
+```bash
+just typecheck
+just test
 ```
