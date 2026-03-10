@@ -74,7 +74,7 @@ results:
     reasoning: This task requires a thorough inspection and analysis of a file for
       security vulnerabilities.
     latency_ms: 1255
-  - prompt: Review prompt-router.ts for bugs and code quality issues.
+  - prompt: Review opencode-plugin-prompt-transformer.ts for bugs and code quality issues.
     label: variant
     expected: A
     got: A

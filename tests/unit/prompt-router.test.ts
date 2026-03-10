@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { fauxMatch } from "../../src/routing";
 
-describe("prompt-router faux rules", () => {
+describe("opencode-plugin-prompt-transformer faux rules", () => {
   it("matches each canonical prompt exactly", () => {
     expect(fauxMatch("Describe every tool you have access to.")).toBe("model-self");
     expect(fauxMatch("What is the latest stable release of TypeScript?")).toBe("knowledge");

@@ -15,4 +15,4 @@ session_id: ses_356f1b55dffeBZvJ117SxHa6cd
 tier_classified: unknown
 tier_expected: knowledge
 timestamp: 2026-03-01T10-58-02Z
-transcript: /home/dzack/ai/opencode/plugins/tests/behavior/results/knowledge/2026-03-01T10-58-02Z.md
+transcript: ./ai/opencode/plugins/tests/behavior/results/knowledge/2026-03-01T10-58-02Z.md

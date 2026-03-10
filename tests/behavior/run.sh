@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Behavioral test runner for the prompt-router plugin.
+# Behavioral test runner for the opencode-plugin-prompt-transformer plugin.
 #
 # Usage:
 #   ./run.sh <tier>                              # routing run (injection ON)
@@ -66,7 +66,7 @@ mkdir -p "$RESULTS_DIR"
 RESULT_FILE="$RESULTS_DIR/$TIMESTAMP.yaml"
 
 LOG_SNAPSHOT="/tmp/pr-log-before-$TIMESTAMP.txt"
-[[ -f /var/sandbox/.prompt-router.log ]] && cp /var/sandbox/.prompt-router.log "$LOG_SNAPSHOT"
+[[ -f /var/sandbox/.opencode-plugin-prompt-transformer.log ]] && cp /var/sandbox/.opencode-plugin-prompt-transformer.log "$LOG_SNAPSHOT"
 
 echo "=== Behavioral Test Run ==="
 echo "Tier:      $TIER"
@@ -82,11 +82,11 @@ timeout "$TIMEOUT" opencode run "$PROMPT" 2>/dev/null || true
 
 # Extract new log entry written during this run
 CLASSIFICATION_JSON=""
-if [[ -f /var/sandbox/.prompt-router.log ]]; then
+if [[ -f /var/sandbox/.opencode-plugin-prompt-transformer.log ]]; then
   if [[ -f "$LOG_SNAPSHOT" ]]; then
-    CLASSIFICATION_JSON=$(diff "$LOG_SNAPSHOT" /var/sandbox/.prompt-router.log | grep '^>' | sed 's/^> //' | tail -1 || true)
+    CLASSIFICATION_JSON=$(diff "$LOG_SNAPSHOT" /var/sandbox/.opencode-plugin-prompt-transformer.log | grep '^>' | sed 's/^> //' | tail -1 || true)
   else
-    CLASSIFICATION_JSON=$(tail -1 /var/sandbox/.prompt-router.log)
+    CLASSIFICATION_JSON=$(tail -1 /var/sandbox/.opencode-plugin-prompt-transformer.log)
   fi
 fi
 

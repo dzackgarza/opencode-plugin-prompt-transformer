@@ -6,115 +6,151 @@ const _dir = dirname(fileURLToPath(import.meta.url));
 const AI_ROOT = resolve(_dir, "../../../ai");
 const OPENCODE_ROOT = resolve(AI_ROOT, "opencode");
 const PYTHON = resolve(OPENCODE_ROOT, ".venv/bin/python");
-const RUN_MICRO_AGENT = resolve(AI_ROOT, "scripts/run_micro_agent.py");
 const UV = "uv";
+const TEMPLATE_INSPECT = "llm-template-inspect";
+const TEMPLATE_RENDER = "llm-template-render";
+const RUNNER_RUN = "llm-run";
 
-export type LLMResponse<T = unknown> =
-  | { ok: true; result: T }
-  | { ok: false; error: string };
+export interface ErrorResponse {
+  error: {
+    type: string;
+    message: string;
+  };
+}
 
-export interface MicroAgent {
-  system: string | null;
-  body: string;
+export interface TemplateReference {
+  path?: string;
+  text?: string;
+  name?: string;
+}
+
+export interface TemplateDocument {
+  path?: string | null;
+  name?: string | null;
   frontmatter: Record<string, unknown>;
-  path: string;
+  body_template: string;
 }
 
-export async function loadMicroAgent(path: string): Promise<MicroAgent> {
-  const res = runBridge<MicroAgent>({ action: "load_micro_agent", path });
-  if (!res.ok) throw new Error(`scripts.llm micro-agent error: ${res.error}`);
-  return res.result;
+export interface InspectTemplateResponse {
+  template: TemplateDocument;
 }
 
-export async function renderTemplate(
-  body: string,
-  variables: Record<string, string>,
-  path?: string,
-): Promise<string> {
-  const res = runBridge<string>({
-    action: "render_template",
-    body,
-    path,
-    variables,
-  });
-  if (!res.ok) throw new Error(`scripts.llm render error: ${res.error}`);
-  return res.result;
+export interface RenderTemplateResponse {
+  template: TemplateDocument;
+  rendered: {
+    body: string;
+    document: string;
+  };
 }
 
-export async function runMicroAgent<T = string>(
-  path: string,
-  variables: Record<string, string>,
-  options?: { model?: string; temperature?: number },
-): Promise<T> {
-  const args = ["run", "--active", "--python", PYTHON, RUN_MICRO_AGENT, path];
-  for (const [key, value] of Object.entries(variables)) {
-    args.push("--var", `${key}=${value}`);
-  }
-  if (options?.model) {
-    args.push("--model", options.model);
-  }
-  if (options?.temperature !== undefined) {
-    args.push("--temperature", String(options.temperature));
-  }
+export interface RunOverrides {
+  models?: string[];
+  temperature?: number;
+  max_tokens?: number;
+  retries?: number;
+}
 
-  const proc = spawnSync(UV, args, {
+export interface RunResponse<T = unknown, TFinal = unknown> {
+  run: {
+    template_path: string;
+    model: string;
+    messages: Array<{ role: string; content: string }>;
+  };
+  response: {
+    model: string;
+    raw_text: string;
+    structured: T | null;
+  };
+  final_output: {
+    text?: string | null;
+    data?: TFinal | null;
+  };
+}
+
+function parseError(stdout: string): string | null {
+  try {
+    const payload = JSON.parse(stdout) as ErrorResponse;
+    if (typeof payload.error?.message === "string") {
+      return payload.error.message;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function runJsonCommand<T>(command: string, request: object): T {
+  const proc = spawnSync(UV, ["run", "--active", "--python", PYTHON, command], {
     cwd: OPENCODE_ROOT,
+    input: JSON.stringify(request),
     encoding: "utf8",
     timeout: 60_000,
   });
 
   if (proc.error) {
-    throw new Error(`scripts.llm runner spawn error: ${proc.error.message}`);
+    throw new Error(`${command} spawn error: ${proc.error.message}`);
   }
 
-  let payload: LLMResponse<T>;
-  try {
-    payload = JSON.parse(proc.stdout) as LLMResponse<T>;
-  } catch {
-    throw new Error(`run_micro_agent returned non-JSON: ${proc.stdout?.slice(0, 200)}`);
-  }
-
-  if (!payload.ok) {
-    throw new Error(`scripts.run_micro_agent error: ${payload.error}`);
-  }
+  const stdout = proc.stdout?.trim() ?? "";
+  const stderr = proc.stderr?.trim() ?? "";
   if (proc.status !== 0) {
-    const stderr = proc.stderr?.trim() ?? "";
-    throw new Error(
-      `scripts.run_micro_agent exited ${proc.status}${stderr ? `: ${stderr}` : ""}`,
-    );
+    const message =
+      parseError(stdout) ?? (stderr || `${command} exited ${proc.status}`);
+    throw new Error(`${command} error: ${message}`);
   }
-  return payload.result;
+
+  try {
+    return JSON.parse(stdout) as T;
+  } catch {
+    throw new Error(`${command} returned non-JSON: ${stdout.slice(0, 200)}`);
+  }
 }
 
-function runBridge<T>(req: object): LLMResponse<T> {
-  const proc = spawnSync(
-    UV,
-    ["run", "--active", "--python", PYTHON, "-m", "scripts.llm.bridge"],
-    {
-      cwd: OPENCODE_ROOT,
-      input: JSON.stringify(req),
-      encoding: "utf8",
-      timeout: 60_000,
-    },
-  );
+export async function inspectTemplate(path: string): Promise<TemplateDocument> {
+  const response = runJsonCommand<InspectTemplateResponse>(TEMPLATE_INSPECT, {
+    template: { path },
+  });
+  return response.template;
+}
 
-  if (proc.error) {
-    return { ok: false, error: `spawn error: ${proc.error.message}` };
+export async function renderTemplatePath(
+  path: string,
+  bindings: Record<string, unknown>,
+): Promise<string> {
+  const response = runJsonCommand<RenderTemplateResponse>(TEMPLATE_RENDER, {
+    template: { path },
+    bindings: { data: bindings },
+  });
+  return response.rendered.body;
+}
+
+export async function runMicroAgent<T = unknown, TFinal = unknown>(
+  path: string,
+  bindings: Record<string, unknown>,
+  options?: {
+    model?: string;
+    temperature?: number;
+    max_tokens?: number;
+    retries?: number;
+  },
+): Promise<RunResponse<T, TFinal>> {
+  const overrides: RunOverrides = {};
+  if (options?.model) {
+    overrides.models = [options.model];
   }
-  if (proc.status !== 0) {
-    const stderr = proc.stderr?.trim() ?? "";
-    return {
-      ok: false,
-      error: `scripts.llm.bridge exited ${proc.status}${stderr ? `: ${stderr}` : ""}`,
-    };
+  if (options?.temperature !== undefined) {
+    overrides.temperature = options.temperature;
+  }
+  if (options?.max_tokens !== undefined) {
+    overrides.max_tokens = options.max_tokens;
+  }
+  if (options?.retries !== undefined) {
+    overrides.retries = options.retries;
   }
 
-  try {
-    return JSON.parse(proc.stdout) as LLMResponse<T>;
-  } catch {
-    return {
-      ok: false,
-      error: `llm.py returned non-JSON: ${proc.stdout?.slice(0, 200)}`,
-    };
-  }
+  return runJsonCommand<RunResponse<T, TFinal>>(RUNNER_RUN, {
+    template: { path },
+    bindings: { data: bindings },
+    overrides,
+  });
 }

@@ -2,6 +2,6 @@
   "$schema": "https://opencode.ai/config.json",
   "model": "github-copilot/gpt-4.1",
   "plugin": [
-    "file:///home/dzack/opencode-plugins/prompt-router/src/index.ts"
+    "file:///path/to/opencode-plugins/prompt-router/src/index.ts"
   ]
 }

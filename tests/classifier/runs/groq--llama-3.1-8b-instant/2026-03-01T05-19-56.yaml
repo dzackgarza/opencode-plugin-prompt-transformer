@@ -77,7 +77,7 @@ results:
     reasoning: This task requires a deep analysis of the command-interceptor.ts file
       to identify potential security vulnerabilities.
     latency_ms: 97
-  - prompt: Review prompt-router.ts for bugs and code quality issues.
+  - prompt: Review opencode-plugin-prompt-transformer.ts for bugs and code quality issues.
     label: variant
     expected: A
     got: B

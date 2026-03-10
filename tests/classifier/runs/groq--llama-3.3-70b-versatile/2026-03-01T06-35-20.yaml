@@ -171,13 +171,13 @@ results:
     reasoning: The task requires investigation and judgment to identify potential
       security vulnerabilities in the code.
     latency_ms: 1342
-  - prompt: Review prompt-router.ts for bugs and code quality issues.
+  - prompt: Review opencode-plugin-prompt-transformer.ts for bugs and code quality issues.
     label: variant
     expected: A
     got: A
     pass: true
     reasoning: The task requires investigation and judgment to identify bugs and
-      code quality issues in the prompt-router.ts file.
+      code quality issues in the opencode-plugin-prompt-transformer.ts file.
     latency_ms: 2306
   - prompt: Why is the auth test failing?
     label: boundary

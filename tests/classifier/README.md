@@ -1,4 +1,3 @@
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/I2I57UKJ8)
 
 # Classifier Test Harness
 
@@ -9,7 +8,7 @@ Evaluates models in `CLASSIFIER_MODELS` against a labeled 12-case suite. It reco
 Navigate to the test directory and run the evaluation:
 
 ```bash
-cd /home/dzack/opencode-plugins/prompt-router/tests/classifier
+cd ./opencode-plugin-prompt-transformer/tests/classifier
 
 # Run with the default model (groq/llama-3.3-70b-versatile)
 bun run run.ts
@@ -25,7 +24,7 @@ Output logs are saved to `runs/<model-slug>/<timestamp>.yaml`. Cumulative scores
 
 ## Execution Process
 
-1. **Prompt Retrieval**: Reads the canonical classifier prompt from `~/ai/prompts/micro_agents/prompt_difficulty_classifier/prompt.md`.
+1. **Prompt Retrieval**: Reads the canonical classifier prompt from `./ai/prompts/micro_agents/prompt_difficulty_classifier/prompt.md`.
 2. **Evaluation**: Calls the runner for each case and compares the returned tier to the expected tier.
 3. **Score Update**: Updates `scores.yaml` with cumulative accuracy.
 4. **Runner**: Uses `scripts/run_micro_agent.py` to enforce the declared schema and return JSON.

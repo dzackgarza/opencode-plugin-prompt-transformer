@@ -80,7 +80,7 @@ results:
     pass: false
     reasoning: ""
     latency_ms: 221
-  - prompt: Review prompt-router.ts for bugs and code quality issues.
+  - prompt: Review opencode-plugin-prompt-transformer.ts for bugs and code quality issues.
     label: variant
     expected: A
     got: "ERROR: 400 Conversation roles must alternate

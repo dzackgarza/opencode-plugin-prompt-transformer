@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "prompt-router",
+      "name": "opencode-plugin-prompt-transformer",
       "dependencies": {
         "@opencode-ai/plugin": "^1.2.20",
         "yaml": "^2.8.1",

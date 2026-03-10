@@ -78,7 +78,7 @@ results:
     reasoning: Audit implies deep analysis for security vulnerabilities, requiring
       thorough inspection across the file.
     latency_ms: 5983
-  - prompt: Review prompt-router.ts for bugs and code quality issues.
+  - prompt: Review opencode-plugin-prompt-transformer.ts for bugs and code quality issues.
     label: variant
     expected: A
     got: A

@@ -91,7 +91,7 @@ Fail:    0/3 runs show expected behavior
 
 ```bash
 # Read classification log:
-cat /var/sandbox/.prompt-router.log | jq -r '.'
+cat /var/sandbox/.opencode-plugin-prompt-transformer.log | jq -r '.'
 
 # Extract tool call sequence from opencode session JSONL:
 cat ~/.local/share/opencode/session/<id>.jsonl \

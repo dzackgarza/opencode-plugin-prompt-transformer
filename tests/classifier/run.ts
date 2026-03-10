@@ -16,12 +16,12 @@
 // Writes per-run log to runs/{slug-safe}/{timestamp}.yaml.
 // Updates cumulative scores in scores.yaml.
 //
-// Structured output and retries handled by scripts/llm/bridge.py.
+// Structured output and retries handled by llm-runner.
 
 import { parse, stringify } from "yaml";
 import { join, dirname, resolve } from "path";
 import { mkdirSync, writeFileSync } from "fs";
-import { loadMicroAgent, runMicroAgent } from "../../src/llm";
+import { inspectTemplate, runMicroAgent } from "../../src/llm";
 
 const DIR = dirname(import.meta.path);
 const RUNS_DIR = join(DIR, "runs");
@@ -104,9 +104,13 @@ async function classify(
       { prompt },
       { model, temperature: 0 },
     );
+    const classification = result.response.structured;
+    if (!classification) {
+      throw new Error("llm-run returned no structured classifier payload");
+    }
     return {
-      tier: result.tier,
-      reasoning: result.reasoning,
+      tier: classification.tier,
+      reasoning: classification.reasoning,
       latency_ms: Date.now() - t0,
     };
   } catch (e: any) {
@@ -127,7 +131,7 @@ const model =
   "groq/llama-3.3-70b-versatile";
 
 // Load classifier prompt metadata and test cases from canonical locations.
-await loadMicroAgent(CLASSIFIER_PROMPT_PATH);
+await inspectTemplate(CLASSIFIER_PROMPT_PATH);
 const { cases } = parse(
   await Bun.file(EXPECTED_CLASSIFICATIONS_PATH).text(),
 ) as { cases: Case[] };

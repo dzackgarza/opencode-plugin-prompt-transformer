@@ -74,7 +74,7 @@ results:
     pass: true
     reasoning: User requests a deep security audit of a single file.
     latency_ms: 349
-  - prompt: Review prompt-router.ts for bugs and code quality issues.
+  - prompt: Review opencode-plugin-prompt-transformer.ts for bugs and code quality issues.
     label: variant
     expected: A
     got: "ERROR: 400 Failed to validate JSON. Please adjust your prompt. See

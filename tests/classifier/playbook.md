@@ -114,7 +114,7 @@ B is safe to run without reading the items first. If you can write the transform
 
 ### A
 - "Audit command-interceptor.ts for security vulnerabilities." → A
-- "Review prompt-router.ts for bugs and code quality issues." → A
+- "Review opencode-plugin-prompt-transformer.ts for bugs and code quality issues." → A
 - "Why is the auth test failing?" → A  *(symptom reported, cause unknown)*
 - "The signup flow is broken — figure out what's wrong." → A  *(diagnosis required)*
 - "Is there a memory leak in the event listener code?" → A  *(investigation, not prescription)*

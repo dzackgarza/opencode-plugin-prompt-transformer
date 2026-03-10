@@ -1,5 +1,5 @@
 # Classifier test cases
-# label: fixed   = canonical prompt (also used as faux rules in prompt-router.ts)
+# label: fixed   = canonical prompt (also used as faux rules in opencode-plugin-prompt-transformer.ts)
 #         variant = rephrasing to test generalization
 #         boundary = deliberately tests a tier boundary or failure mode
 
@@ -104,7 +104,7 @@ cases:
     tier: A
     label: fixed
 
-  - prompt: "Review prompt-router.ts for bugs and code quality issues."
+  - prompt: "Review opencode-plugin-prompt-transformer.ts for bugs and code quality issues."
     tier: A
     label: variant
 

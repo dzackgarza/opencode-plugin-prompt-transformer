@@ -14,4 +14,4 @@ session_id: ses_356e1b234ffePVgdk8Sh743yUY
 tier_classified: unknown
 tier_expected: model-self
 timestamp: 2026-03-01T11-17-59Z
-transcript: /home/dzack/ai/opencode/plugins/tests/behavior/results/model-self/2026-03-01T11-17-59Z.md
+transcript: ./ai/opencode/plugins/tests/behavior/results/model-self/2026-03-01T11-17-59Z.md

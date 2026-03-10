@@ -1,6 +1,6 @@
 import { describe, it, expect } from "bun:test";
 
-// Mirror faux rules from the prompt-router example.
+// Mirror faux rules from the opencode-plugin-prompt-transformer example.
 type Tier = "model-self" | "knowledge" | "C" | "B" | "A" | "S";
 
 const FAUX_RULES: Array<{ prompt: string; tier: Tier }> = [
@@ -20,7 +20,7 @@ function fauxMatch(text: string): Tier | null {
   return null;
 }
 
-describe("prompt-router faux rules", () => {
+describe("opencode-plugin-prompt-transformer faux rules", () => {
   it("matches each canonical prompt exactly", () => {
     for (const { prompt, tier } of FAUX_RULES) {
       expect(fauxMatch(prompt)).toBe(tier);

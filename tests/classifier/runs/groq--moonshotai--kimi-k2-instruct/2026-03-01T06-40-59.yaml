@@ -166,7 +166,7 @@ results:
     reasoning: The agent must read and analyze the file to identify unknown security
       issues before any action can be taken.
     latency_ms: 232
-  - prompt: Review prompt-router.ts for bugs and code quality issues.
+  - prompt: Review opencode-plugin-prompt-transformer.ts for bugs and code quality issues.
     label: variant
     expected: A
     got: A

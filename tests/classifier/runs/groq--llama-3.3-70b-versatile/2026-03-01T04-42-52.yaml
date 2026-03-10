@@ -80,13 +80,13 @@ results:
       command-interceptor.ts file to identify potential security
       vulnerabilities.
     latency_ms: 310
-  - prompt: Review prompt-router.ts for bugs and code quality issues.
+  - prompt: Review opencode-plugin-prompt-transformer.ts for bugs and code quality issues.
     label: variant
     expected: A
     got: A
     pass: true
     reasoning: The task requires a thorough inspection and review of the code in
-      prompt-router.ts to identify bugs and code quality issues.
+      opencode-plugin-prompt-transformer.ts to identify bugs and code quality issues.
     latency_ms: 187
   - prompt: Design a plugin for tracking token usage per session.
     label: fixed

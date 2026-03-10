@@ -3,7 +3,7 @@ import { fileURLToPath } from "url";
 import { resolve, dirname } from "path";
 import type { Plugin } from "@opencode-ai/plugin";
 import type { TextPart } from "@opencode-ai/sdk";
-import { renderTemplate, runMicroAgent } from "./llm";
+import { renderTemplatePath, runMicroAgent } from "./llm";
 import {
   FAUX_RULES,
   fauxMatch,
@@ -13,7 +13,7 @@ import {
 } from "./routing";
 
 const _dir = dirname(fileURLToPath(import.meta.url));
-const AI_ROOT = resolve(_dir, "../../../ai");
+const AI_ROOT = process.env.AI_ROOT || resolve(_dir, "../../../ai");
 
 const CLASSIFIER_PROMPT_PATH = resolve(
   AI_ROOT,
@@ -24,7 +24,7 @@ const RESPONSE_TEMPLATE_PATH = resolve(
   "prompts/micro_agents/prompt_difficulty_classifier/response_template.md",
 );
 
-const LOG_PATH = "/var/sandbox/.prompt-router.log";
+const LOG_PATH = process.env.PROMPT_TRANSFORMER_LOG_PATH || "/tmp/opencode-plugin-prompt-transformer.log";
 
 function appendLog(entry: {
   ts: string;
@@ -41,8 +41,6 @@ function appendLog(entry: {
   }
 }
 
-const RESPONSE_TEMPLATE_BODY = await Bun.file(RESPONSE_TEMPLATE_PATH).text();
-
 async function classify(
   text: string,
 ): Promise<{ tier: Tier; reasoning: string } | null> {
@@ -52,10 +50,11 @@ async function classify(
   }
 
   try {
-    return await runMicroAgent<{ tier: Tier; reasoning: string }>(
+    const response = await runMicroAgent<{ tier: Tier; reasoning: string }>(
       CLASSIFIER_PROMPT_PATH,
       { prompt: text.trim() },
     );
+    return response.response.structured;
   } catch {
     return null;
   }
@@ -82,8 +81,8 @@ export const PromptRouter: Plugin = async ({ client }) => {
         const probePrompt = FAUX_RULES.find(({ prompt, tier: probeTier }) =>
           probeTier === tier && prompt === normalizedText,
         )?.prompt;
-        const instruction = await renderTemplate(
-          RESPONSE_TEMPLATE_BODY,
+        const instruction = await renderTemplatePath(
+          RESPONSE_TEMPLATE_PATH,
           {
             tier,
             passcode: ROUTING_PASSCODES[tier],
@@ -111,7 +110,7 @@ export const PromptRouter: Plugin = async ({ client }) => {
 
         await client.app.log({
           body: {
-            service: "prompt-router",
+            service: "opencode-plugin-prompt-transformer",
             level: "info",
             message: `Classified as ${tier}: ${reasoning}`,
             extra: { tier, reasoning },
@@ -120,7 +119,7 @@ export const PromptRouter: Plugin = async ({ client }) => {
       } catch (err: any) {
         await client.app.log({
           body: {
-            service: "prompt-router",
+            service: "opencode-plugin-prompt-transformer",
             level: "error",
             message: "Error in messages transform",
             extra: { error: err?.message ?? String(err) },

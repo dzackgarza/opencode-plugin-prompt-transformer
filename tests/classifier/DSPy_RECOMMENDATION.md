@@ -1,6 +1,6 @@
 # DSPy for Task Classification
 
-DSPy is recommended as a framework for **generating correct classification prompts** and **fine-tuning injected prompts** within the `prompt-router.ts` plugin.
+DSPy is recommended as a framework for **generating correct classification prompts** and **fine-tuning injected prompts** within the `opencode-plugin-prompt-transformer.ts` plugin.
 
 ## Purpose
 

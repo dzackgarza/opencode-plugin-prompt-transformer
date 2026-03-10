@@ -1,12 +1,12 @@
 ---
-# Behavioral test task definitions for the prompt-router plugin.
+# Behavioral test task definitions for the opencode-plugin-prompt-transformer plugin.
 #
 # Each task triggers one tier and elicits observable behavioral signals.
 # Tasks use the /var/sandbox/ codebase (sindresorhus/execa + synthetic
 # lib/arguments/parser.js module containing an A-tier bug).
 #
 # Faux-rules prompts (marked faux_rule: true) bypass the LLM classifier —
-# the tier is matched deterministically in FAUX_RULES in the prompt-router example.
+# the tier is matched deterministically in FAUX_RULES in the opencode-plugin-prompt-transformer example.
 
 tasks:
 

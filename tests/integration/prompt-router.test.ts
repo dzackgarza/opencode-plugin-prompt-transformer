@@ -2,10 +2,10 @@ import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { FAUX_RULES, ROUTING_PASSCODES } from "../../src/routing";
 
-const OPENCODE = "/home/dzack/.opencode/bin/opencode";
+const OPENCODE = process.env.OPENCODE_BIN || "opencode";
 const MODEL = "github-copilot/gpt-4.1";
-const TOOL_DIR = "/home/dzack/opencode-plugins/prompt-router";
-const CONFIG_PATH = "/home/dzack/opencode-plugins/prompt-router/.config/opencode.json";
+const TOOL_DIR = process.cwd();
+const CONFIG_PATH = "./opencode-plugin-prompt-transformer/.config/opencode.json";
 const MAX_BUFFER = 8 * 1024 * 1024;
 
 function run(
@@ -30,7 +30,7 @@ function run(
   return `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
 }
 
-describe("prompt-router live routing proof", () => {
+describe("opencode-plugin-prompt-transformer live routing proof", () => {
   it("control: without the plugin, the model does not emit the model-self routing passcode", () => {
     const modelSelfPrompt = FAUX_RULES.find(({ tier }) => tier === "model-self")!.prompt;
     const output = run(modelSelfPrompt, {

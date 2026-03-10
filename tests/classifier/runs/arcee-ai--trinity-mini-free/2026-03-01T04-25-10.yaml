@@ -71,7 +71,7 @@ results:
     pass: false
     reasoning: ""
     latency_ms: 16
-  - prompt: Review prompt-router.ts for bugs and code quality issues.
+  - prompt: Review opencode-plugin-prompt-transformer.ts for bugs and code quality issues.
     label: variant
     expected: A
     got: "PARSE_ERROR: "

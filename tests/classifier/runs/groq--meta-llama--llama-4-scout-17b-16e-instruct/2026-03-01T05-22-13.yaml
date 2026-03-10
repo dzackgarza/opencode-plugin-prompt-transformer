@@ -83,13 +83,13 @@ results:
       file to identify potential security vulnerabilities, indicating a complex
       task that benefits from thorough inspection.
     latency_ms: 151
-  - prompt: Review prompt-router.ts for bugs and code quality issues.
+  - prompt: Review opencode-plugin-prompt-transformer.ts for bugs and code quality issues.
     label: variant
     expected: A
     got: A
     pass: true
     reasoning: The prompt requires a deep analysis and review of the code in
-      prompt-router.ts, which suggests a complex task.
+      opencode-plugin-prompt-transformer.ts, which suggests a complex task.
     latency_ms: 208
   - prompt: Design a plugin for tracking token usage per session.
     label: fixed
