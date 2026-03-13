@@ -35,7 +35,6 @@ type ServerHandle = {
 
 let pluginServer: ServerHandle | undefined;
 let controlServer: ServerHandle | undefined;
-let tempRoot = "";
 
 function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -64,16 +63,40 @@ async function findFreePort(): Promise<number> {
   });
 }
 
+function resolveDirenvEnv(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
+  const result = spawnSync("direnv", ["exec", cwd, "env", "-0"], {
+    cwd,
+    env,
+    encoding: "utf8",
+    timeout: 30_000,
+    maxBuffer: MAX_BUFFER,
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(
+      `Failed to resolve direnv environment.\nSTDOUT:\n${result.stdout ?? ""}\nSTDERR:\n${result.stderr ?? ""}`,
+    );
+  }
+  const resolved: NodeJS.ProcessEnv = {};
+  for (const entry of (result.stdout ?? "").split("\0")) {
+    if (!entry) continue;
+    const sep = entry.indexOf("=");
+    if (sep < 0) continue;
+    resolved[entry.slice(0, sep)] = entry.slice(sep + 1);
+  }
+  return resolved;
+}
+
 function buildControlConfigContent(): string {
-  const config: Record<string, unknown> = {
-    model: MODEL,
-  };
-  return JSON.stringify(config);
+  return JSON.stringify({ model: MODEL });
 }
 
 async function startServer(options: {
-  configPath?: string;
   configContent?: string;
+  pluginConfig?: boolean;
 }): Promise<ServerHandle> {
   spawnSync("direnv", ["allow", TOOL_DIR], { cwd: TOOL_DIR, timeout: 30_000 });
 
@@ -81,18 +104,31 @@ async function startServer(options: {
   const configHome = join(xdgRoot, "config");
   const cacheHome = join(xdgRoot, "cache");
   const stateHome = join(xdgRoot, "state");
+  const testHome = join(xdgRoot, "home");
   mkdirSync(configHome, { recursive: true });
   mkdirSync(cacheHome, { recursive: true });
   mkdirSync(stateHome, { recursive: true });
+  mkdirSync(testHome, { recursive: true });
 
   const port = await findFreePort();
   const baseUrl = `http://${HOST}:${port}`;
+
+  // Let direnv resolve the full env for this dir, with isolated XDG dirs pre-seeded.
+  const isolatedBase: NodeJS.ProcessEnv = {
+    ...process.env,
+    XDG_CONFIG_HOME: configHome,
+    XDG_CACHE_HOME: cacheHome,
+    XDG_STATE_HOME: stateHome,
+    OPENCODE_TEST_HOME: testHome,
+    ...(options.configContent ? { OPENCODE_CONFIG_CONTENT: options.configContent } : {}),
+  };
+  const resolvedEnv = options.pluginConfig
+    ? resolveDirenvEnv(TOOL_DIR, isolatedBase)
+    : isolatedBase;
+
   const childProcess = spawn(
-    "direnv",
+    OPENCODE,
     [
-      "exec",
-      TOOL_DIR,
-      OPENCODE,
       "serve",
       "--hostname",
       HOST,
@@ -104,23 +140,7 @@ async function startServer(options: {
     ],
     {
       cwd: TOOL_DIR,
-      env: {
-        ...process.env,
-        XDG_CONFIG_HOME: configHome,
-        XDG_CACHE_HOME: cacheHome,
-        XDG_STATE_HOME: stateHome,
-        ...(options.configPath
-          ? {
-              OPENCODE_CONFIG: options.configPath,
-              OPENCODE_CONFIG_DIR: join(TOOL_DIR, ".config"),
-            }
-          : {}),
-        ...(options.configContent
-          ? {
-              OPENCODE_CONFIG_CONTENT: options.configContent,
-            }
-          : {}),
-      },
+      env: resolvedEnv,
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
@@ -136,29 +156,23 @@ async function startServer(options: {
   const deadline = Date.now() + SERVER_START_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (logs.includes(ready)) {
-      return {
-        baseUrl,
-        process: childProcess,
-        logs,
-        xdgRoot,
-      };
+      return { baseUrl, process: childProcess, logs, xdgRoot };
     }
     if (childProcess.exitCode !== null) {
       throw new Error(
-        `Custom OpenCode server exited early (${childProcess.exitCode}).\n${logs}`,
+        `OpenCode server exited early (${childProcess.exitCode}).\n${logs}`,
       );
     }
     await wait(200);
   }
 
   throw new Error(
-    `Timed out waiting for custom OpenCode server at ${baseUrl}.\n${logs}`,
+    `Timed out waiting for OpenCode server at ${baseUrl}.\n${logs}`,
   );
 }
 
 async function stopServer(server: ServerHandle | undefined) {
   if (!server) return;
-
   if (server.process.exitCode === null) {
     server.process.kill("SIGINT");
     const deadline = Date.now() + 10_000;
@@ -168,7 +182,6 @@ async function stopServer(server: ServerHandle | undefined) {
     }
     if (server.process.exitCode === null) server.process.kill("SIGKILL");
   }
-
   rmSync(server.xdgRoot, { recursive: true, force: true });
 }
 
@@ -178,17 +191,13 @@ function runSessionCommand(baseUrl: string, args: string[]) {
     ["--yes", `--package=${MANAGER_PACKAGE}`, "opx-session", ...args],
     {
       cwd: TOOL_DIR,
-      env: {
-        ...process.env,
-        OPENCODE_BASE_URL: baseUrl,
-      },
+      env: { ...process.env, OPENCODE_BASE_URL: baseUrl },
       encoding: "utf8",
       timeout: SESSION_TIMEOUT_MS,
       maxBuffer: MAX_BUFFER,
     },
   );
   if (result.error) throw result.error;
-
   const stdout = result.stdout ?? "";
   const stderr = result.stderr ?? "";
   if (result.status !== 0) {
@@ -209,7 +218,7 @@ function deleteSession(baseUrl: string, sessionID: string) {
   try {
     runSessionCommand(baseUrl, ["delete", sessionID, "--json"]);
   } catch {
-    // best-effort cleanup in a noisy shared environment
+    // best-effort cleanup
   }
 }
 
@@ -245,9 +254,8 @@ async function waitForAssistantContains(
     if (text.includes(expected)) return text;
     await wait(1_000);
   }
-
   throw new Error(
-    `Timed out waiting for assistant text to include ${expected}.\n${JSON.stringify(readMessages(baseUrl, sessionID), null, 2)}`,
+    `Timed out waiting for assistant text to include "${expected}".\n${JSON.stringify(readMessages(baseUrl, sessionID), null, 2)}`,
   );
 }
 
@@ -262,7 +270,6 @@ async function waitForAssistantReply(
     if (text.length > 0) return text;
     await wait(1_000);
   }
-
   throw new Error(
     `Timed out waiting for assistant reply.\n${JSON.stringify(readMessages(baseUrl, sessionID), null, 2)}`,
   );
@@ -275,27 +282,19 @@ async function runPrompt(baseUrl: string, prompt: string) {
 }
 
 beforeAll(async () => {
-  tempRoot = mkdtempSync(join(tmpdir(), "prompt-router-test-"));
-  pluginServer = await startServer({
-    configPath: join(TOOL_DIR, ".config/opencode.json"),
-  });
-  controlServer = await startServer({
-    configContent: buildControlConfigContent(),
-  });
+  pluginServer = await startServer({ pluginConfig: true });
+  controlServer = await startServer({ configContent: buildControlConfigContent() });
 }, 120_000);
 
 afterAll(async () => {
   await stopServer(pluginServer);
   await stopServer(controlServer);
-  if (tempRoot) rmSync(tempRoot, { recursive: true, force: true });
 }, 30_000);
 
 describe("opencode-plugin-prompt-transformer live routing proof", () => {
   it("control: without the plugin, the manager-driven session does not emit the model-self routing passcode", async () => {
     const nonce = randomUUID();
-    const modelSelfPrompt = FAUX_RULES.find(
-      ({ tier }) => tier === "model-self",
-    )!.prompt;
+    const modelSelfPrompt = FAUX_RULES.find(({ tier }) => tier === "model-self")!.prompt;
     const promptWithNonce = `${modelSelfPrompt} After responding, also include this exact string: ${nonce}`;
     const baseUrl = controlServer!.baseUrl;
     const sessionID = await runPrompt(baseUrl, promptWithNonce);
@@ -320,7 +319,6 @@ describe("opencode-plugin-prompt-transformer live routing proof", () => {
           sessionID,
           ROUTING_PASSCODES[tier],
         );
-
         expect(text).toContain(ROUTING_PASSCODES[tier]);
         expect(text).toContain(nonce);
         expect(extractRoutedTier(text)).toBe(tier);
