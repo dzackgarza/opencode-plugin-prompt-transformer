@@ -5,6 +5,13 @@
 
 Classify user prompts into routing tiers and rewrite messages with this OpenCode plugin. It uses `chat.message` to transform user text.
 
+## Features
+
+- Passive `chat.message` hook — intercepts every user message without requiring a tool call
+- Classifies input into routing tiers (`model-self`, `knowledge`, `C`, `B`, `A`, `S`) using `llm-run`
+- Rewrites messages with tier-appropriate instructions injected from the canonical `ai-prompts` library
+- JSONL decision log via `PROMPT_TRANSFORMER_LOG_PATH` for debugging classification decisions
+
 ## Install
 
 Run these commands to install:
