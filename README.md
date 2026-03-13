@@ -14,17 +14,7 @@ cd ./opencode-plugin-prompt-transformer
 just install
 ```
 
-Register the plugin via `file:` in your OpenCode config:
-
-```json
-{
-  "plugin": [
-    "file:///path/to/opencode-plugin-prompt-transformer/src/index.ts"
-  ]
-}
-```
-
-View a sample configuration here: [`opencode-plugin-prompt-transformer/.config/opencode.json`](./opencode-plugin-prompt-transformer/.config/opencode.json)
+Repo-local verification uses [`.envrc`](./.envrc), [`.config/opencode.json`](./.config/opencode.json), and a checked-in symlink under [`.config/plugins`](./.config/plugins) so OpenCode loads the real exporter without a machine-specific `file://` path.
 
 **MCP**: None. This package provides a chat-transform hook rather than a tool server.
 
@@ -39,8 +29,8 @@ This plugin intercepts chat messages without exposing tool names. It performs th
 Dependencies:
 
 - **Runtime**: Bun, `@opencode-ai/plugin`, `yaml`
-- **External local assets**: `./ai/prompts/...`
-- **External local runtime**: `./ai/opencode/.venv`, which provides `llm-run` and `llm-template-render` from the GitHub-backed `llm-runner` and `llm-templating-engine` dependencies declared in `./ai/opencode/pyproject.toml`
+- **External local assets**: prompts resolved from [`ai-prompts`](https://github.com/dzackgarza/ai-prompts) via `$PROMPTS_DIR`
+- **External local runtime**: `llm-run` and `llm-template-render` from [`llm-runner`](https://github.com/dzackgarza/llm-runner) and [`llm-templating-engine`](https://github.com/dzackgarza/llm-templating-engine) — must be available on `$PATH` or in the active `uv` environment
 
 ## LLM Integration
 
@@ -49,14 +39,7 @@ Dependencies:
 - `llm-run` for prompt execution and structured classifier output
 - `llm-template-render` for response-template rendering
 
-That means the local OpenCode environment must be synced first:
-
-```bash
-cd ./ai/opencode
-uv sync --dev
-```
-
-For ad hoc smoke tests outside the project environment, the canonical upstream CLIs are also available directly from GitHub via `uvx --from`:
+Install the CLIs via `uvx` directly from GitHub:
 
 ```bash
 uvx --from git+https://github.com/dzackgarza/llm-runner.git llm-run --help
