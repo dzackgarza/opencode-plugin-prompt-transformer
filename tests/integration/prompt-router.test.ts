@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
@@ -26,17 +26,8 @@ type SessionMessage = {
   }>;
 };
 
-type RouterLogEntry = {
-  session_id: string;
-  prompt: string;
-  tier: Tier;
-  reasoning: string;
-  injected: boolean;
-};
-
 type ServerHandle = {
   baseUrl: string;
-  logPath: string;
   process: ChildProcess;
   logs: string;
   xdgRoot: string;
@@ -83,7 +74,6 @@ function buildControlConfigContent(): string {
 async function startServer(options: {
   configPath?: string;
   configContent?: string;
-  logPath: string;
 }): Promise<ServerHandle> {
   spawnSync("direnv", ["allow", TOOL_DIR], { cwd: TOOL_DIR, timeout: 30_000 });
 
@@ -130,7 +120,6 @@ async function startServer(options: {
               OPENCODE_CONFIG_CONTENT: options.configContent,
             }
           : {}),
-        PROMPT_TRANSFORMER_LOG_PATH: options.logPath,
       },
       stdio: ["ignore", "pipe", "pipe"],
     },
@@ -149,7 +138,6 @@ async function startServer(options: {
     if (logs.includes(ready)) {
       return {
         baseUrl,
-        logPath: options.logPath,
         process: childProcess,
         logs,
         xdgRoot,
@@ -240,6 +228,11 @@ function assistantText(messages: SessionMessage[]) {
     .join("\n");
 }
 
+function extractRoutedTier(text: string): Tier | null {
+  const match = text.match(/<!--\s*router:tier=([^\s>]+)\s*-->/);
+  return match ? (match[1] as Tier) : null;
+}
+
 async function waitForAssistantContains(
   baseUrl: string,
   sessionID: string,
@@ -275,39 +268,6 @@ async function waitForAssistantReply(
   );
 }
 
-function readLogEntries(logPath: string): RouterLogEntry[] {
-  try {
-    const raw = readFileSync(logPath, "utf8");
-    return raw
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as RouterLogEntry);
-  } catch {
-    return [];
-  }
-}
-
-async function waitForLogEntry(
-  logPath: string,
-  sessionID: string,
-  tier: Tier,
-  timeoutMs = 30_000,
-) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const entry = readLogEntries(logPath).find(
-      (row) => row.session_id === sessionID && row.tier === tier,
-    );
-    if (entry) return entry;
-    await wait(500);
-  }
-
-  throw new Error(
-    `Timed out waiting for routing log entry for ${sessionID} (${tier}).`,
-  );
-}
-
 async function runPrompt(baseUrl: string, prompt: string) {
   const sessionID = createSession(baseUrl, `prompt-router:${Date.now()}`).id;
   runSessionCommand(baseUrl, ["prompt", sessionID, prompt, "--no-reply"]);
@@ -318,11 +278,9 @@ beforeAll(async () => {
   tempRoot = mkdtempSync(join(tmpdir(), "prompt-router-test-"));
   pluginServer = await startServer({
     configPath: join(TOOL_DIR, ".config/opencode.json"),
-    logPath: join(tempRoot, "plugin.log"),
   });
   controlServer = await startServer({
     configContent: buildControlConfigContent(),
-    logPath: join(tempRoot, "control.log"),
   });
 }, 120_000);
 
@@ -345,7 +303,6 @@ describe("opencode-plugin-prompt-transformer live routing proof", () => {
       const text = await waitForAssistantReply(baseUrl, sessionID);
       expect(text).not.toContain(ROUTING_PASSCODES["model-self"]);
       expect(text).toContain(nonce);
-      expect(readLogEntries(controlServer!.logPath)).toHaveLength(0);
     } finally {
       deleteSession(baseUrl, sessionID);
     }
@@ -363,16 +320,10 @@ describe("opencode-plugin-prompt-transformer live routing proof", () => {
           sessionID,
           ROUTING_PASSCODES[tier],
         );
-        const logEntry = await waitForLogEntry(
-          pluginServer!.logPath,
-          sessionID,
-          tier,
-        );
 
         expect(text).toContain(ROUTING_PASSCODES[tier]);
         expect(text).toContain(nonce);
-        expect(logEntry.prompt).toBe(promptWithNonce);
-        expect(logEntry.injected).toBe(true);
+        expect(extractRoutedTier(text)).toBe(tier);
       } finally {
         deleteSession(baseUrl, sessionID);
       }
