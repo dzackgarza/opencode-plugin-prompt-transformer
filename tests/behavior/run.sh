@@ -65,9 +65,6 @@ RESULTS_DIR="$SCRIPT_DIR/results/$TIER"
 mkdir -p "$RESULTS_DIR"
 RESULT_FILE="$RESULTS_DIR/$TIMESTAMP.yaml"
 
-LOG_SNAPSHOT="/tmp/pr-log-before-$TIMESTAMP.txt"
-[[ -f /var/sandbox/.opencode-plugin-prompt-transformer.log ]] && cp /var/sandbox/.opencode-plugin-prompt-transformer.log "$LOG_SNAPSHOT"
-
 echo "=== Behavioral Test Run ==="
 echo "Tier:      $TIER"
 echo "Mode:      ${PROMPT_ROUTER_ENABLED:-'(default)'}"
@@ -77,27 +74,19 @@ echo ""
 
 cd /var/sandbox/execa
 
+# Capture transcript; tee to terminal for live observability.
+TRANSCRIPT_FILE=$(mktemp)
 # Exit code 124 = timeout (ok — model may still have completed).
-timeout "$TIMEOUT" opencode run "$PROMPT" 2>/dev/null || true
+timeout "$TIMEOUT" opencode run "$PROMPT" 2>/dev/null | tee "$TRANSCRIPT_FILE" || true
 
-# Extract new log entry written during this run
-CLASSIFICATION_JSON=""
-if [[ -f /var/sandbox/.opencode-plugin-prompt-transformer.log ]]; then
-  if [[ -f "$LOG_SNAPSHOT" ]]; then
-    CLASSIFICATION_JSON=$(diff "$LOG_SNAPSHOT" /var/sandbox/.opencode-plugin-prompt-transformer.log | grep '^>' | sed 's/^> //' | tail -1 || true)
-  else
-    CLASSIFICATION_JSON=$(tail -1 /var/sandbox/.opencode-plugin-prompt-transformer.log)
-  fi
-fi
-
-TIER_CLASSIFIED=$(echo "$CLASSIFICATION_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('tier','unknown'))" 2>/dev/null || echo "unknown")
-REASONING=$(echo "$CLASSIFICATION_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('reasoning',''))" 2>/dev/null || echo "")
+# Extract tier from the <!-- router:tier=<tier> --> metadata line injected by the plugin.
+TIER_CLASSIFIED=$(grep -oP '(?<=<!-- router:tier=)[^> ]+(?= -->)' "$TRANSCRIPT_FILE" | head -1 || echo "unknown")
+rm -f "$TRANSCRIPT_FILE"
 
 TIER="$TIER" \
 TIER_CLASSIFIED="$TIER_CLASSIFIED" \
 TIMESTAMP="$TIMESTAMP" \
 PROMPT="$PROMPT" \
-REASONING="$REASONING" \
 RESULT_FILE="$RESULT_FILE" \
 python3 - <<'PYEOF'
 import yaml, os
@@ -107,7 +96,6 @@ result = {
     'tier_classified': os.environ['TIER_CLASSIFIED'],
     'timestamp': os.environ['TIMESTAMP'],
     'prompt': os.environ['PROMPT'],
-    'reasoning': os.environ['REASONING'],
     'observed_behaviors': {
         'todo_write_created': None,
         'files_read_before_edit': None,

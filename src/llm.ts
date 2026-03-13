@@ -1,27 +1,24 @@
 import { spawnSync } from "child_process";
-import { fileURLToPath } from "url";
-import { resolve, dirname } from "path";
 
-const _dir = dirname(fileURLToPath(import.meta.url));
-const AI_ROOT = resolve(_dir, "../../../ai");
-const OPENCODE_ROOT = resolve(AI_ROOT, "opencode");
-const PYTHON = resolve(OPENCODE_ROOT, ".venv/bin/python");
-const UV = "uv";
+const UVX = "uvx";
+
 const TEMPLATE_INSPECT = "llm-template-inspect";
 const TEMPLATE_RENDER = "llm-template-render";
 const RUNNER_RUN = "llm-run";
+const AI_PROMPTS_CLI = "ai-prompts";
+
+const COMMAND_PACKAGES: Record<string, string> = {
+  [TEMPLATE_INSPECT]: "git+https://github.com/dzackgarza/llm-templating-engine.git",
+  [TEMPLATE_RENDER]: "git+https://github.com/dzackgarza/llm-templating-engine.git",
+  [RUNNER_RUN]: "git+https://github.com/dzackgarza/llm-runner.git",
+  [AI_PROMPTS_CLI]: "git+https://github.com/dzackgarza/ai-prompts.git",
+};
 
 export interface ErrorResponse {
   error: {
     type: string;
     message: string;
   };
-}
-
-export interface TemplateReference {
-  path?: string;
-  text?: string;
-  name?: string;
 }
 
 export interface TemplateDocument {
@@ -80,8 +77,11 @@ function parseError(stdout: string): string | null {
 }
 
 function runJsonCommand<T>(command: string, request: object): T {
-  const proc = spawnSync(UV, ["run", "--active", "--python", PYTHON, command], {
-    cwd: OPENCODE_ROOT,
+  const pkg = COMMAND_PACKAGES[command];
+  if (!pkg) {
+    throw new Error(`Unknown command: ${command}`);
+  }
+  const proc = spawnSync(UVX, ["--from", pkg, command], {
     input: JSON.stringify(request),
     encoding: "utf8",
     timeout: 60_000,
@@ -106,26 +106,41 @@ function runJsonCommand<T>(command: string, request: object): T {
   }
 }
 
-export async function inspectTemplate(path: string): Promise<TemplateDocument> {
+export function fetchPromptText(slug: string): string {
+  const pkg = COMMAND_PACKAGES[AI_PROMPTS_CLI];
+  const proc = spawnSync(UVX, ["--from", pkg, AI_PROMPTS_CLI, "get", slug], {
+    encoding: "utf8",
+    timeout: 30_000,
+  });
+  if (proc.error) {
+    throw new Error(`ai-prompts spawn error: ${proc.error.message}`);
+  }
+  if (proc.status !== 0) {
+    throw new Error(`ai-prompts get ${slug} failed: ${proc.stderr?.trim()}`);
+  }
+  return proc.stdout?.trim() ?? "";
+}
+
+export async function inspectTemplate(text: string): Promise<TemplateDocument> {
   const response = runJsonCommand<InspectTemplateResponse>(TEMPLATE_INSPECT, {
-    template: { path },
+    template: { text },
   });
   return response.template;
 }
 
-export async function renderTemplatePath(
-  path: string,
+export async function renderTemplateText(
+  text: string,
   bindings: Record<string, unknown>,
 ): Promise<string> {
   const response = runJsonCommand<RenderTemplateResponse>(TEMPLATE_RENDER, {
-    template: { path },
+    template: { text },
     bindings: { data: bindings },
   });
   return response.rendered.body;
 }
 
 export async function runMicroAgent<T = unknown, TFinal = unknown>(
-  path: string,
+  text: string,
   bindings: Record<string, unknown>,
   options?: {
     model?: string;
@@ -149,7 +164,7 @@ export async function runMicroAgent<T = unknown, TFinal = unknown>(
   }
 
   return runJsonCommand<RunResponse<T, TFinal>>(RUNNER_RUN, {
-    template: { path },
+    template: { text },
     bindings: { data: bindings },
     overrides,
   });

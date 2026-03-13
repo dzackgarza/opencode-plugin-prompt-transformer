@@ -1,9 +1,6 @@
-import { appendFileSync } from "fs";
-import { fileURLToPath } from "url";
-import { resolve, dirname } from "path";
 import type { Plugin } from "@opencode-ai/plugin";
 import type { TextPart } from "@opencode-ai/sdk";
-import { renderTemplatePath, runMicroAgent } from "./llm";
+import { fetchPromptText, renderTemplateText, runMicroAgent } from "./llm";
 import {
   FAUX_RULES,
   fauxMatch,
@@ -12,33 +9,26 @@ import {
   type Tier,
 } from "./routing";
 
-const _dir = dirname(fileURLToPath(import.meta.url));
-const AI_ROOT = process.env.AI_ROOT || resolve(_dir, "../../../ai");
+const CLASSIFIER_SLUG = "micro-agents/prompt-difficulty-classifier";
+const RESPONSE_TEMPLATE_SLUG =
+  "micro-agents/prompt-difficulty-classifier/support/response-template";
 
-const CLASSIFIER_PROMPT_PATH = resolve(
-  AI_ROOT,
-  "prompts/micro_agents/prompt_difficulty_classifier/prompt.md",
-);
-const RESPONSE_TEMPLATE_PATH = resolve(
-  AI_ROOT,
-  "prompts/micro_agents/prompt_difficulty_classifier/response_template.md",
-);
+// Lazy-load prompt texts once per process lifetime.
+let _classifierText: string | null = null;
+let _responseTemplateText: string | null = null;
 
-const LOG_PATH = process.env.PROMPT_TRANSFORMER_LOG_PATH || "/tmp/opencode-plugin-prompt-transformer.log";
-
-function appendLog(entry: {
-  ts: string;
-  session_id: string;
-  prompt: string;
-  tier: string;
-  reasoning: string;
-  injected: boolean;
-}): void {
-  try {
-    appendFileSync(LOG_PATH, JSON.stringify(entry) + "\n");
-  } catch {
-    // Log directory may not exist in dev.
+function getClassifierText(): string {
+  if (!_classifierText) {
+    _classifierText = fetchPromptText(CLASSIFIER_SLUG);
   }
+  return _classifierText;
+}
+
+function getResponseTemplateText(): string {
+  if (!_responseTemplateText) {
+    _responseTemplateText = fetchPromptText(RESPONSE_TEMPLATE_SLUG);
+  }
+  return _responseTemplateText;
 }
 
 async function classify(
@@ -51,7 +41,7 @@ async function classify(
 
   try {
     const response = await runMicroAgent<{ tier: Tier; reasoning: string }>(
-      CLASSIFIER_PROMPT_PATH,
+      getClassifierText(),
       { prompt: text.trim() },
     );
     return response.response.structured;
@@ -62,7 +52,7 @@ async function classify(
 
 export const PromptRouter: Plugin = async ({ client }) => {
   return {
-    "chat.message": async (input, output) => {
+    "chat.message": async (_input, output) => {
       try {
         const text = output.parts
           .filter((part): part is TextPart => part.type === "text")
@@ -81,8 +71,8 @@ export const PromptRouter: Plugin = async ({ client }) => {
         const probePrompt = FAUX_RULES.find(({ prompt, tier: probeTier }) =>
           probeTier === tier && prompt === normalizedText,
         )?.prompt;
-        const instruction = await renderTemplatePath(
-          RESPONSE_TEMPLATE_PATH,
+        const instruction = await renderTemplateText(
+          getResponseTemplateText(),
           {
             tier,
             passcode: ROUTING_PASSCODES[tier],
@@ -98,15 +88,6 @@ export const PromptRouter: Plugin = async ({ client }) => {
         } else {
           firstTextPart.text = `${instruction}\n\n${firstTextPart.text}`;
         }
-
-        appendLog({
-          ts: new Date().toISOString(),
-          session_id: input.sessionID,
-          prompt: normalizedText.slice(0, 500),
-          tier,
-          reasoning,
-          injected: true,
-        });
 
         await client.app.log({
           body: {
