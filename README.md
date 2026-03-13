@@ -46,6 +46,14 @@ uvx --from git+https://github.com/dzackgarza/llm-runner.git llm-run --help
 uvx --from git+https://github.com/dzackgarza/llm-templating-engine.git llm-template-render --help
 ```
 
+## Environment Variables
+
+| Name | Required | Default | Controls |
+|------|----------|---------|---------|
+| `PROMPTS_DIR` | Yes | — | Root directory of the [`ai-prompts`](https://github.com/dzackgarza/ai-prompts) repo |
+| `PROMPT_TRANSFORMER_LOG_PATH` | No | — | File path for JSONL routing decision log |
+| `PROMPT_TRANSFORMER_TEST_PASSPHRASE` | No | — | Passphrase for integration test liveness proof |
+
 ## Checks
 
 Run checks with just:
