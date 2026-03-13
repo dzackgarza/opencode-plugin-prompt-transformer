@@ -1,19 +1,17 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
-import { pathToFileURL } from "node:url";
 import { FAUX_RULES, ROUTING_PASSCODES, type Tier } from "../../src/routing";
 
-const OPENCODE =
-  process.env.OPENCODE_BIN || "/home/dzack/.opencode/bin/opencode";
+const OPENCODE = process.env.OPENCODE_BIN || "opencode";
 const TOOL_DIR = process.cwd();
 const HOST = "127.0.0.1";
 const MODEL = "github-copilot/gpt-4.1";
-const MANAGER_PACKAGE =
-  "git+ssh://git@github.com/dzackgarza/opencode-manager.git";
+const MANAGER_PACKAGE = join(TOOL_DIR, "..", "opencode-manager");
 const MAX_BUFFER = 8 * 1024 * 1024;
 const SERVER_START_TIMEOUT_MS = 60_000;
 const SESSION_TIMEOUT_MS = 240_000;
@@ -41,6 +39,7 @@ type ServerHandle = {
   logPath: string;
   process: ChildProcess;
   logs: string;
+  xdgRoot: string;
 };
 
 let pluginServer: ServerHandle | undefined;
@@ -74,21 +73,27 @@ async function findFreePort(): Promise<number> {
   });
 }
 
-function buildConfigContent(includePlugin: boolean): string {
+function buildControlConfigContent(): string {
   const config: Record<string, unknown> = {
     model: MODEL,
   };
-  if (includePlugin) {
-    config.plugin = [pathToFileURL(join(TOOL_DIR, "src/index.ts")).toString()];
-  }
   return JSON.stringify(config);
 }
 
 async function startServer(options: {
-  includePlugin: boolean;
+  configPath?: string;
+  configContent?: string;
   logPath: string;
 }): Promise<ServerHandle> {
   spawnSync("direnv", ["allow", TOOL_DIR], { cwd: TOOL_DIR, timeout: 30_000 });
+
+  const xdgRoot = mkdtempSync(join(tmpdir(), "opencode-prompt-transformer-xdg-"));
+  const configHome = join(xdgRoot, "config");
+  const cacheHome = join(xdgRoot, "cache");
+  const stateHome = join(xdgRoot, "state");
+  mkdirSync(configHome, { recursive: true });
+  mkdirSync(cacheHome, { recursive: true });
+  mkdirSync(stateHome, { recursive: true });
 
   const port = await findFreePort();
   const baseUrl = `http://${HOST}:${port}`;
@@ -111,7 +116,20 @@ async function startServer(options: {
       cwd: TOOL_DIR,
       env: {
         ...process.env,
-        OPENCODE_CONFIG_CONTENT: buildConfigContent(options.includePlugin),
+        XDG_CONFIG_HOME: configHome,
+        XDG_CACHE_HOME: cacheHome,
+        XDG_STATE_HOME: stateHome,
+        ...(options.configPath
+          ? {
+              OPENCODE_CONFIG: options.configPath,
+              OPENCODE_CONFIG_DIR: join(TOOL_DIR, ".config"),
+            }
+          : {}),
+        ...(options.configContent
+          ? {
+              OPENCODE_CONFIG_CONTENT: options.configContent,
+            }
+          : {}),
         PROMPT_TRANSFORMER_LOG_PATH: options.logPath,
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -134,6 +152,7 @@ async function startServer(options: {
         logPath: options.logPath,
         process: childProcess,
         logs,
+        xdgRoot,
       };
     }
     if (childProcess.exitCode !== null) {
@@ -150,16 +169,19 @@ async function startServer(options: {
 }
 
 async function stopServer(server: ServerHandle | undefined) {
-  if (!server || server.process.exitCode !== null) return;
+  if (!server) return;
 
-  server.process.kill("SIGINT");
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline) {
-    if (server.process.exitCode !== null) return;
-    await wait(100);
+  if (server.process.exitCode === null) {
+    server.process.kill("SIGINT");
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      if (server.process.exitCode !== null) break;
+      await wait(100);
+    }
+    if (server.process.exitCode === null) server.process.kill("SIGKILL");
   }
 
-  server.process.kill("SIGKILL");
+  rmSync(server.xdgRoot, { recursive: true, force: true });
 }
 
 function runSessionCommand(baseUrl: string, args: string[]) {
@@ -295,11 +317,11 @@ async function runPrompt(baseUrl: string, prompt: string) {
 beforeAll(async () => {
   tempRoot = mkdtempSync(join(tmpdir(), "prompt-router-test-"));
   pluginServer = await startServer({
-    includePlugin: true,
+    configPath: join(TOOL_DIR, ".config/opencode.json"),
     logPath: join(tempRoot, "plugin.log"),
   });
   controlServer = await startServer({
-    includePlugin: false,
+    configContent: buildControlConfigContent(),
     logPath: join(tempRoot, "control.log"),
   });
 }, 120_000);
@@ -312,14 +334,17 @@ afterAll(async () => {
 
 describe("opencode-plugin-prompt-transformer live routing proof", () => {
   it("control: without the plugin, the manager-driven session does not emit the model-self routing passcode", async () => {
+    const nonce = randomUUID();
     const modelSelfPrompt = FAUX_RULES.find(
       ({ tier }) => tier === "model-self",
     )!.prompt;
+    const promptWithNonce = `${modelSelfPrompt} After responding, also include this exact string: ${nonce}`;
     const baseUrl = controlServer!.baseUrl;
-    const sessionID = await runPrompt(baseUrl, modelSelfPrompt);
+    const sessionID = await runPrompt(baseUrl, promptWithNonce);
     try {
       const text = await waitForAssistantReply(baseUrl, sessionID);
       expect(text).not.toContain(ROUTING_PASSCODES["model-self"]);
+      expect(text).toContain(nonce);
       expect(readLogEntries(controlServer!.logPath)).toHaveLength(0);
     } finally {
       deleteSession(baseUrl, sessionID);
@@ -328,8 +353,10 @@ describe("opencode-plugin-prompt-transformer live routing proof", () => {
 
   for (const { prompt, tier } of FAUX_RULES) {
     it(`routes ${tier} prompts through the injected template on a custom-port manager session`, async () => {
+      const nonce = randomUUID();
+      const promptWithNonce = `${prompt} After responding, also include this exact string: ${nonce}`;
       const baseUrl = pluginServer!.baseUrl;
-      const sessionID = await runPrompt(baseUrl, prompt);
+      const sessionID = await runPrompt(baseUrl, promptWithNonce);
       try {
         const text = await waitForAssistantContains(
           baseUrl,
@@ -343,7 +370,8 @@ describe("opencode-plugin-prompt-transformer live routing proof", () => {
         );
 
         expect(text).toContain(ROUTING_PASSCODES[tier]);
-        expect(logEntry.prompt).toBe(prompt);
+        expect(text).toContain(nonce);
+        expect(logEntry.prompt).toBe(promptWithNonce);
         expect(logEntry.injected).toBe(true);
       } finally {
         deleteSession(baseUrl, sessionID);
