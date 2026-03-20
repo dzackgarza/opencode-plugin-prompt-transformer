@@ -213,8 +213,8 @@ async function stopServer(server: ServerHandle | undefined) {
 
 function runSessionCommand(baseUrl: string, args: string[]) {
   const result = spawnSync(
-    'npx',
-    ['--yes', `--package=${MANAGER_PACKAGE}`, 'opx', ...args],
+    'uvx',
+    ['--from', MANAGER_PACKAGE, 'ocm', ...args],
     {
       cwd: TOOL_DIR,
       env: { ...process.env, OPENCODE_BASE_URL: baseUrl },
@@ -244,13 +244,13 @@ function createSession(baseUrl: string) {
       '--json',
     ]),
   ) as {
-    id: string;
+    sessionID: string;
   };
 }
 
 function deleteSession(baseUrl: string, sessionID: string) {
   try {
-    runSessionCommand(baseUrl, ['delete', '--session', sessionID]);
+    runSessionCommand(baseUrl, ['delete', sessionID]);
   } catch {
     // best-effort cleanup
   }
@@ -258,7 +258,7 @@ function deleteSession(baseUrl: string, sessionID: string) {
 
 function readTranscript(baseUrl: string, sessionID: string): TranscriptDocument {
   return JSON.parse(
-    runSessionCommand(baseUrl, ['transcript', '--session', sessionID, '--json']),
+    runSessionCommand(baseUrl, ['transcript', sessionID, '--json']),
   ) as TranscriptDocument;
 }
 
@@ -308,12 +308,10 @@ async function waitForAssistantReply(
 }
 
 async function runPrompt(baseUrl: string, prompt: string) {
-  const sessionID = createSession(baseUrl).id;
+  const sessionID = createSession(baseUrl).sessionID;
   runSessionCommand(baseUrl, [
     'chat',
-    '--session',
     sessionID,
-    '--prompt',
     prompt,
     '--no-reply',
   ]);
@@ -323,10 +321,9 @@ async function runPrompt(baseUrl: string, prompt: string) {
 function runOneShot(baseUrl: string, prompt: string): string {
   return runSessionCommand(baseUrl, [
     'one-shot',
+    prompt,
     '--agent',
     'Minimal',
-    '--prompt',
-    prompt,
     '--transcript',
   ]).trim();
 }
