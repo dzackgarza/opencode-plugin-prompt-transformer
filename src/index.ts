@@ -1,111 +1,93 @@
-import type { Plugin } from "@opencode-ai/plugin";
-import type { TextPart } from "@opencode-ai/sdk";
-import { fetchPromptText, renderTemplateText, runMicroAgent } from "./llm";
-import {
-  FAUX_RULES,
-  fauxMatch,
-  normalizePrompt,
-  ROUTING_PASSCODES,
-  type Tier,
-} from "./routing";
+import { spawnSync } from 'child_process';
 
-const CLASSIFIER_SLUG = "micro-agents/prompt-difficulty-classifier";
-const RESPONSE_TEMPLATE_SLUG =
-  "micro-agents/prompt-difficulty-classifier/support/response-template";
+import type { Plugin } from '@opencode-ai/plugin';
+import type { TextPart } from '@opencode-ai/sdk';
 
-// Lazy-load prompt texts once per process lifetime.
-let _classifierText: string | null = null;
-let _responseTemplateText: string | null = null;
+const UVX = 'uvx';
+const CLI_SPEC =
+  process.env.PROMPT_TRANSFORMER_CLI_SPEC ??
+  'file:///home/dzack/opencode-plugins/clis/prompt-transformer';
+const CLI_NAME = 'prompt-transformer';
 
-function getClassifierText(): string {
-  if (!_classifierText) {
-    _classifierText = fetchPromptText(CLASSIFIER_SLUG);
-  }
-  return _classifierText;
-}
+type TransformResult = {
+  normalized_prompt: string;
+  tier: string;
+  reasoning: string;
+  probe_prompt: string | null;
+  instruction: string;
+  transformed_prompt: string;
+};
 
-function getResponseTemplateText(): string {
-  if (!_responseTemplateText) {
-    _responseTemplateText = fetchPromptText(RESPONSE_TEMPLATE_SLUG);
-  }
-  return _responseTemplateText;
-}
+function runTransform(prompt: string): TransformResult | null {
+  const proc = spawnSync(UVX, ['--from', CLI_SPEC, CLI_NAME, 'transform', prompt], {
+    encoding: 'utf8',
+    timeout: 60_000,
+  });
 
-async function classify(
-  text: string,
-): Promise<{ tier: Tier; reasoning: string } | null> {
-  const fauxTier = fauxMatch(text);
-  if (fauxTier) {
-    return { tier: fauxTier, reasoning: "faux exact match" };
+  if (proc.error) {
+    throw new Error(`prompt-transformer spawn error: ${proc.error.message}`);
   }
 
-  try {
-    const response = await runMicroAgent<{ tier: Tier; reasoning: string }>(
-      getClassifierText(),
-      { prompt: text.trim() },
-    );
-    return response.response.structured;
-  } catch {
+  const stdout = proc.stdout?.trim() ?? '';
+  const stderr = proc.stderr?.trim() ?? '';
+  if (proc.status !== 0) {
+    throw new Error(stderr || `prompt-transformer exited ${proc.status}`);
+  }
+  if (!stdout || stdout === 'null') {
     return null;
   }
+
+  const payload = JSON.parse(stdout) as TransformResult;
+  return payload;
 }
 
 export const PromptRouter: Plugin = async ({ client }) => {
   return {
-    "chat.message": async (_input, output) => {
+    'chat.message': async (_input, output) => {
       try {
         const text = output.parts
-          .filter((part): part is TextPart => part.type === "text")
+          .filter((part): part is TextPart => part.type === 'text')
           .map((part) => part.text)
-          .join(" ");
-        const normalizedText = normalizePrompt(text);
-        if (!normalizedText) return;
-        const textParts = output.parts.filter((part): part is TextPart => part.type === "text");
+          .join(' ');
+
+        const transform = runTransform(text);
+        if (!transform) return;
+
+        const textParts = output.parts.filter(
+          (part): part is TextPart => part.type === 'text',
+        );
         const firstTextPart = textParts[0];
         if (!firstTextPart) return;
 
-        const classification = await classify(normalizedText);
-        if (!classification) return;
-
-        const { tier, reasoning } = classification;
-        const probePrompt = FAUX_RULES.find(({ prompt, tier: probeTier }) =>
-          probeTier === tier && prompt === normalizedText,
-        )?.prompt;
-        const instruction = await renderTemplateText(
-          getResponseTemplateText(),
-          {
-            tier,
-            passcode: ROUTING_PASSCODES[tier],
-            probe_prompt: probePrompt ?? "",
-          },
-        );
-
-        if (probePrompt) {
-          firstTextPart.text = instruction;
+        firstTextPart.text = transform.transformed_prompt;
+        if (transform.probe_prompt) {
           for (const part of textParts.slice(1)) {
             part.ignored = true;
           }
-        } else {
-          firstTextPart.text = `${instruction}\n\n${firstTextPart.text}`;
         }
 
-        await client.app.log({
-          body: {
-            service: "opencode-plugin-prompt-transformer",
-            level: "info",
-            message: `Classified as ${tier}: ${reasoning}`,
-            extra: { tier, reasoning },
-          },
-        }).catch(() => {});
-      } catch (err: any) {
-        await client.app.log({
-          body: {
-            service: "opencode-plugin-prompt-transformer",
-            level: "error",
-            message: "Error in messages transform",
-            extra: { error: err?.message ?? String(err) },
-          },
-        }).catch(() => {});
+        await client.app
+          .log({
+            body: {
+              service: 'opencode-plugin-prompt-transformer',
+              level: 'info',
+              message: `Classified as ${transform.tier}: ${transform.reasoning}`,
+              extra: { tier: transform.tier, reasoning: transform.reasoning },
+            },
+          })
+          .catch(() => {});
+      } catch (err: unknown) {
+        const error = err instanceof Error ? err.message : String(err);
+        await client.app
+          .log({
+            body: {
+              service: 'opencode-plugin-prompt-transformer',
+              level: 'error',
+              message: 'Error in messages transform',
+              extra: { error },
+            },
+          })
+          .catch(() => {});
       }
     },
   };
