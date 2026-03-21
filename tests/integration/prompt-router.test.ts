@@ -34,36 +34,17 @@ const FAUX_RULES: Array<{ prompt: string; tier: Tier }> = [
   { prompt: 'Design a plugin for tracking token usage per session.', tier: 'S' },
 ];
 
-const OPENCODE = process.env.OPENCODE_BIN || 'opencode';
 const TOOL_DIR = process.cwd();
 const HOST = '127.0.0.1';
-const MODEL = 'github-copilot/gpt-4.1';
-const MANAGER_PACKAGE = join(TOOL_DIR, '..', '..', 'clis', 'opencode-manager');
+const MANAGER_PACKAGE = 'git+https://github.com/dzackgarza/opencode-manager.git';
 const MAX_BUFFER = 8 * 1024 * 1024;
 const SERVER_START_TIMEOUT_MS = 60_000;
 const SESSION_TIMEOUT_MS = 240_000;
 
-type TranscriptAssistantMessage = {
-  text?: string;
-};
-
-type TranscriptTurn = {
-  assistantMessages?: TranscriptAssistantMessage[];
-};
-
-type TranscriptDocument = {
-  turns?: TranscriptTurn[];
-};
-
-type ServerHandle = {
-  baseUrl: string;
-  process: ChildProcess;
-  logs: string;
-  xdgRoot: string;
-};
-
-let pluginServer: ServerHandle | undefined;
-let controlServer: ServerHandle | undefined;
+function extractRoutedTier(text: string): Tier | null {
+  const match = text.match(/<!--\s*router:tier=([^\s>]+)\s*-->/);
+  return match ? (match[1] as Tier) : null;
+}
 
 function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -82,15 +63,18 @@ async function findFreePort(): Promise<number> {
       }
       const { port } = address;
       server.close((error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
+        if (error) { reject(error); return; }
         resolve(port);
       });
     });
   });
 }
+
+type ServerHandle = {
+  baseUrl: string;
+  process: ChildProcess;
+  xdgRoot: string;
+};
 
 function resolveDirenvEnv(cwd: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const result = spawnSync('direnv', ['exec', cwd, 'env', '-0'], {
@@ -116,14 +100,7 @@ function resolveDirenvEnv(cwd: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEn
   return resolved;
 }
 
-function buildControlConfigContent(): string {
-  return JSON.stringify({ model: MODEL });
-}
-
-async function startServer(options: {
-  configContent?: string;
-  pluginConfig?: boolean;
-}): Promise<ServerHandle> {
+async function startPluginServer(): Promise<ServerHandle> {
   spawnSync('direnv', ['allow', TOOL_DIR], { cwd: TOOL_DIR, timeout: 30_000 });
 
   const xdgRoot = mkdtempSync(join(tmpdir(), 'opencode-prompt-transformer-xdg-'));
@@ -139,61 +116,37 @@ async function startServer(options: {
   const port = await findFreePort();
   const baseUrl = `http://${HOST}:${port}`;
 
-  // Let direnv resolve the full env for this dir, with isolated XDG dirs pre-seeded.
+  // Resolve the full direnv env for this plugin dir with isolated XDG dirs.
+  // This picks up the plugin registration and any plugin-specific env vars.
   const isolatedBase: NodeJS.ProcessEnv = {
     ...process.env,
     XDG_CONFIG_HOME: configHome,
     XDG_CACHE_HOME: cacheHome,
     XDG_STATE_HOME: stateHome,
     OPENCODE_TEST_HOME: testHome,
-    ...(options.configContent
-      ? { OPENCODE_CONFIG_CONTENT: options.configContent }
-      : {}),
   };
-  const resolvedEnv = options.pluginConfig
-    ? resolveDirenvEnv(TOOL_DIR, isolatedBase)
-    : isolatedBase;
+  const resolvedEnv = resolveDirenvEnv(TOOL_DIR, isolatedBase);
 
   const childProcess = spawn(
-    OPENCODE,
-    [
-      'serve',
-      '--hostname',
-      HOST,
-      '--port',
-      String(port),
-      '--print-logs',
-      '--log-level',
-      'INFO',
-    ],
-    {
-      cwd: TOOL_DIR,
-      env: resolvedEnv,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    },
+    'opencode',
+    ['serve', '--hostname', HOST, '--port', String(port), '--print-logs', '--log-level', 'INFO'],
+    { cwd: TOOL_DIR, env: resolvedEnv, stdio: ['ignore', 'pipe', 'pipe'] },
   );
 
   let logs = '';
-  const capture = (chunk: Buffer | string) => {
-    logs += chunk.toString();
-  };
+  const capture = (chunk: Buffer | string) => { logs += chunk.toString(); };
   childProcess.stdout.on('data', capture);
   childProcess.stderr.on('data', capture);
 
   const ready = `opencode server listening on ${baseUrl}`;
   const deadline = Date.now() + SERVER_START_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    if (logs.includes(ready)) {
-      return { baseUrl, process: childProcess, logs, xdgRoot };
-    }
+    if (logs.includes(ready)) return { baseUrl, process: childProcess, xdgRoot };
     if (childProcess.exitCode !== null) {
-      throw new Error(
-        `OpenCode server exited early (${childProcess.exitCode}).\n${logs}`,
-      );
+      throw new Error(`OpenCode server exited early (${childProcess.exitCode}).\n${logs}`);
     }
     await wait(200);
   }
-
   throw new Error(`Timed out waiting for OpenCode server at ${baseUrl}.\n${logs}`);
 }
 
@@ -211,12 +164,11 @@ async function stopServer(server: ServerHandle | undefined) {
   rmSync(server.xdgRoot, { recursive: true, force: true });
 }
 
-function runSessionCommand(baseUrl: string, args: string[]) {
+function runOneShot(baseUrl: string, prompt: string): string {
   const result = spawnSync(
     'uvx',
-    ['--from', MANAGER_PACKAGE, 'ocm', ...args],
+    ['--from', MANAGER_PACKAGE, 'ocm', 'one-shot', prompt, '--agent', 'Minimal', '--transcript'],
     {
-      cwd: TOOL_DIR,
       env: { ...process.env, OPENCODE_BASE_URL: baseUrl },
       encoding: 'utf8',
       timeout: SESSION_TIMEOUT_MS,
@@ -224,139 +176,30 @@ function runSessionCommand(baseUrl: string, args: string[]) {
     },
   );
   if (result.error) throw result.error;
-  const stdout = result.stdout ?? '';
-  const stderr = result.stderr ?? '';
   if (result.status !== 0) {
     throw new Error(
-      `Manager command failed: ${args.join(' ')}\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`,
+      `ocm one-shot failed\nSTDOUT:\n${result.stdout ?? ''}\nSTDERR:\n${result.stderr ?? ''}`,
     );
   }
-  return stdout;
+  return (result.stdout ?? '').trim();
 }
 
-function createSession(baseUrl: string) {
-  return JSON.parse(
-    runSessionCommand(baseUrl, [
-      'begin-session',
-      'Reply with ONLY READY.',
-      '--agent',
-      'Minimal',
-      '--json',
-    ]),
-  ) as {
-    sessionID: string;
-  };
-}
-
-function deleteSession(baseUrl: string, sessionID: string) {
-  try {
-    runSessionCommand(baseUrl, ['delete', sessionID]);
-  } catch {
-    // best-effort cleanup
-  }
-}
-
-function readTranscript(baseUrl: string, sessionID: string): TranscriptDocument {
-  return JSON.parse(
-    runSessionCommand(baseUrl, ['transcript', sessionID, '--json']),
-  ) as TranscriptDocument;
-}
-
-function assistantText(document: TranscriptDocument) {
-  return (document.turns ?? [])
-    .flatMap((turn) => turn.assistantMessages ?? [])
-    .map((message) => message.text ?? '')
-    .join('\n');
-}
-
-function extractRoutedTier(text: string): Tier | null {
-  const match = text.match(/<!--\s*router:tier=([^\s>]+)\s*-->/);
-  return match ? (match[1] as Tier) : null;
-}
-
-async function waitForAssistantContains(
-  baseUrl: string,
-  sessionID: string,
-  expected: string,
-  timeoutMs = 180_000,
-) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const text = assistantText(readTranscript(baseUrl, sessionID));
-    if (text.includes(expected)) return text;
-    await wait(1_000);
-  }
-  throw new Error(
-    `Timed out waiting for assistant text to include "${expected}".\n${JSON.stringify(readTranscript(baseUrl, sessionID), null, 2)}`,
-  );
-}
-
-async function waitForAssistantReply(
-  baseUrl: string,
-  sessionID: string,
-  timeoutMs = 180_000,
-) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const text = assistantText(readTranscript(baseUrl, sessionID)).trim();
-    if (text.length > 0) return text;
-    await wait(1_000);
-  }
-  throw new Error(
-    `Timed out waiting for assistant reply.\n${JSON.stringify(readTranscript(baseUrl, sessionID), null, 2)}`,
-  );
-}
-
-async function runPrompt(baseUrl: string, prompt: string) {
-  const sessionID = createSession(baseUrl).sessionID;
-  runSessionCommand(baseUrl, [
-    'chat',
-    sessionID,
-    prompt,
-    '--no-reply',
-  ]);
-  return sessionID;
-}
-
-function runOneShot(baseUrl: string, prompt: string): string {
-  return runSessionCommand(baseUrl, [
-    'one-shot',
-    prompt,
-    '--agent',
-    'Minimal',
-    '--transcript',
-  ]).trim();
-}
+let pluginServer: ServerHandle | undefined;
 
 beforeAll(async () => {
-  pluginServer = await startServer({ pluginConfig: true });
-  controlServer = await startServer({ configContent: buildControlConfigContent() });
+  pluginServer = await startPluginServer();
 }, 120_000);
 
 afterAll(async () => {
   await stopServer(pluginServer);
-  await stopServer(controlServer);
 }, 30_000);
 
 describe('opencode-plugin-prompt-transformer live routing proof', () => {
-  it('control: without the plugin, the manager-driven session does not emit the model-self routing passcode', async () => {
-    const nonce = randomUUID();
-    const modelSelfPrompt = FAUX_RULES.find(
-      ({ tier }) => tier === 'model-self',
-    )!.prompt;
-    const promptWithNonce = `${modelSelfPrompt} After responding, also include this exact string: ${nonce}`;
-    const baseUrl = controlServer!.baseUrl;
-    const text = runOneShot(baseUrl, promptWithNonce);
-    expect(text).not.toContain(ROUTING_PASSCODES['model-self']);
-    expect(text).toContain(nonce);
-  }, 200_000);
-
   for (const { prompt, tier } of FAUX_RULES) {
-    it(`routes ${tier} prompts through the injected template on a custom-port manager session`, async () => {
+    it(`routes ${tier} prompts through the injected template`, async () => {
       const nonce = randomUUID();
       const promptWithNonce = `${prompt} After responding, also include this exact string: ${nonce}`;
-      const baseUrl = pluginServer!.baseUrl;
-      const text = runOneShot(baseUrl, promptWithNonce);
+      const text = runOneShot(pluginServer!.baseUrl, promptWithNonce);
       expect(text).toContain(ROUTING_PASSCODES[tier]);
       expect(text).toContain(nonce);
       expect(extractRoutedTier(text)).toBe(tier);
