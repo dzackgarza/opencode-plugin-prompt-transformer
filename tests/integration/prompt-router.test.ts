@@ -1,10 +1,16 @@
-import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { describe, expect, it } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { createServer } from 'node:net';
+import { spawnSync } from 'node:child_process';
+
+// Server is started and torn down by `just test` — not by this file.
+// Set OPENCODE_BASE_URL before running.
+const BASE_URL = process.env.OPENCODE_BASE_URL;
+if (!BASE_URL) throw new Error('OPENCODE_BASE_URL must be set (run via `just test`)');
+
+const MANAGER_PACKAGE = 'git+https://github.com/dzackgarza/opencode-manager.git';
+const MAX_BUFFER = 8 * 1024 * 1024;
+const SESSION_TIMEOUT_MS = 240_000;
+const AGENT_NAME = 'plugin-proof';
 
 type Tier = 'model-self' | 'knowledge' | 'C' | 'B' | 'A' | 'S';
 
@@ -21,188 +27,98 @@ const FAUX_RULES: Array<{ prompt: string; tier: Tier }> = [
   { prompt: 'Describe every tool you have access to.', tier: 'model-self' },
   { prompt: 'What is the latest stable release of TypeScript?', tier: 'knowledge' },
   {
-    prompt:
-      'Create a file named router-poc-c.txt containing exactly: poc-baseline-c, then delete it.',
+    prompt: 'Create a file named router-poc-c.txt containing exactly: poc-baseline-c, then delete it.',
     tier: 'C',
   },
   {
-    prompt:
-      'For each .ts file in this directory, open it and print the name of every exported symbol.',
+    prompt: 'For each .ts file in this directory, open it and print the name of every exported symbol.',
     tier: 'B',
   },
   { prompt: 'Audit command-interceptor.ts for security vulnerabilities.', tier: 'A' },
   { prompt: 'Design a plugin for tracking token usage per session.', tier: 'S' },
 ];
 
-const TOOL_DIR = process.cwd();
-const HOST = '127.0.0.1';
-const MANAGER_PACKAGE = 'git+https://github.com/dzackgarza/opencode-manager.git';
-const MAX_BUFFER = 8 * 1024 * 1024;
-const SERVER_START_TIMEOUT_MS = 60_000;
-const SESSION_TIMEOUT_MS = 240_000;
-
 function extractRoutedTier(text: string): Tier | null {
   const match = text.match(/<!--\s*router:tier=([^\s>]+)\s*-->/);
   return match ? (match[1] as Tier) : null;
 }
 
-function wait(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function findFreePort(): Promise<number> {
-  return await new Promise((resolve, reject) => {
-    const server = createServer();
-    server.once('error', reject);
-    server.listen(0, HOST, () => {
-      const address = server.address();
-      if (!address || typeof address === 'string') {
-        server.close();
-        reject(new Error('Failed to allocate a TCP port.'));
-        return;
-      }
-      const { port } = address;
-      server.close((error) => {
-        if (error) { reject(error); return; }
-        resolve(port);
-      });
-    });
-  });
-}
-
-type ServerHandle = {
-  baseUrl: string;
-  process: ChildProcess;
-  xdgRoot: string;
-};
-
-function resolveDirenvEnv(cwd: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const result = spawnSync('direnv', ['exec', cwd, 'env', '-0'], {
-    cwd,
-    env,
-    encoding: 'utf8',
-    timeout: 30_000,
-    maxBuffer: MAX_BUFFER,
-  });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(
-      `Failed to resolve direnv environment.\nSTDOUT:\n${result.stdout ?? ''}\nSTDERR:\n${result.stderr ?? ''}`,
-    );
-  }
-  const resolved: NodeJS.ProcessEnv = {};
-  for (const entry of (result.stdout ?? '').split('\0')) {
-    if (!entry) continue;
-    const sep = entry.indexOf('=');
-    if (sep < 0) continue;
-    resolved[entry.slice(0, sep)] = entry.slice(sep + 1);
-  }
-  return resolved;
-}
-
-async function startPluginServer(): Promise<ServerHandle> {
-  spawnSync('direnv', ['allow', TOOL_DIR], { cwd: TOOL_DIR, timeout: 30_000 });
-
-  const xdgRoot = mkdtempSync(join(tmpdir(), 'opencode-prompt-transformer-xdg-'));
-  const configHome = join(xdgRoot, 'config');
-  const cacheHome = join(xdgRoot, 'cache');
-  const stateHome = join(xdgRoot, 'state');
-  const testHome = join(xdgRoot, 'home');
-  mkdirSync(configHome, { recursive: true });
-  mkdirSync(cacheHome, { recursive: true });
-  mkdirSync(stateHome, { recursive: true });
-  mkdirSync(testHome, { recursive: true });
-
-  const port = await findFreePort();
-  const baseUrl = `http://${HOST}:${port}`;
-
-  // Resolve the full direnv env for this plugin dir with isolated XDG dirs.
-  // This picks up the plugin registration and any plugin-specific env vars.
-  const isolatedBase: NodeJS.ProcessEnv = {
-    ...process.env,
-    XDG_CONFIG_HOME: configHome,
-    XDG_CACHE_HOME: cacheHome,
-    XDG_STATE_HOME: stateHome,
-    OPENCODE_TEST_HOME: testHome,
-  };
-  const resolvedEnv = resolveDirenvEnv(TOOL_DIR, isolatedBase);
-
-  const childProcess = spawn(
-    'opencode',
-    ['serve', '--hostname', HOST, '--port', String(port), '--print-logs', '--log-level', 'INFO'],
-    { cwd: TOOL_DIR, env: resolvedEnv, stdio: ['ignore', 'pipe', 'pipe'] },
-  );
-
-  let logs = '';
-  const capture = (chunk: Buffer | string) => { logs += chunk.toString(); };
-  childProcess.stdout.on('data', capture);
-  childProcess.stderr.on('data', capture);
-
-  const ready = `opencode server listening on ${baseUrl}`;
-  const deadline = Date.now() + SERVER_START_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    if (logs.includes(ready)) return { baseUrl, process: childProcess, xdgRoot };
-    if (childProcess.exitCode !== null) {
-      throw new Error(`OpenCode server exited early (${childProcess.exitCode}).\n${logs}`);
-    }
-    await wait(200);
-  }
-  throw new Error(`Timed out waiting for OpenCode server at ${baseUrl}.\n${logs}`);
-}
-
-async function stopServer(server: ServerHandle | undefined) {
-  if (!server) return;
-  if (server.process.exitCode === null) {
-    server.process.kill('SIGINT');
-    const deadline = Date.now() + 10_000;
-    while (Date.now() < deadline) {
-      if (server.process.exitCode !== null) break;
-      await wait(100);
-    }
-    if (server.process.exitCode === null) server.process.kill('SIGKILL');
-  }
-  rmSync(server.xdgRoot, { recursive: true, force: true });
-}
-
-function runOneShot(baseUrl: string, prompt: string): string {
+function runOcm(args: string[]): { stdout: string; stderr: string } {
   const result = spawnSync(
     'uvx',
-    ['--from', MANAGER_PACKAGE, 'ocm', 'one-shot', prompt, '--agent', 'Minimal', '--transcript'],
+    ['--from', MANAGER_PACKAGE, 'ocm', ...args],
     {
-      env: { ...process.env, OPENCODE_BASE_URL: baseUrl },
+      env: { ...process.env, OPENCODE_BASE_URL: BASE_URL },
       encoding: 'utf8',
       timeout: SESSION_TIMEOUT_MS,
       maxBuffer: MAX_BUFFER,
     },
   );
   if (result.error) throw result.error;
+  const stdout = result.stdout ?? '';
+  const stderr = result.stderr ?? '';
   if (result.status !== 0) {
-    throw new Error(
-      `ocm one-shot failed\nSTDOUT:\n${result.stdout ?? ''}\nSTDERR:\n${result.stderr ?? ''}`,
-    );
+    throw new Error(`ocm ${args.join(' ')} failed\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`);
   }
-  return (result.stdout ?? '').trim();
+  return { stdout, stderr };
 }
 
-let pluginServer: ServerHandle | undefined;
+// begin-session submits the prompt and returns immediately (session ID only).
+// Use ocm wait to block until the full turn completes.
+function beginSession(prompt: string): string {
+  const { stdout } = runOcm(['begin-session', prompt, '--agent', AGENT_NAME, '--json']);
+  const data = JSON.parse(stdout) as { sessionID: string };
+  if (!data.sessionID) throw new Error(`begin-session returned no sessionID: ${stdout}`);
+  return data.sessionID;
+}
 
-beforeAll(async () => {
-  pluginServer = await startPluginServer();
-}, 120_000);
+function waitIdle(sessionID: string) {
+  runOcm(['wait', sessionID, '--timeout-sec=180']);
+}
 
-afterAll(async () => {
-  await stopServer(pluginServer);
-}, 30_000);
+// Return all assistant text content from the transcript, joined.
+// The routing passcode is injected by the plugin into the model's context,
+// and the model echoes it back in its text reply.
+function readFinalAssistantText(sessionID: string): string {
+  const { stdout } = runOcm(['transcript', sessionID, '--json']);
+  const data = JSON.parse(stdout) as {
+    turns: Array<{
+      assistantMessages: Array<{
+        steps: Array<{ type: string; contentText?: string } | null>;
+      }>;
+    }>;
+  };
+  const parts = data.turns.flatMap((turn) =>
+    turn.assistantMessages.flatMap((msg) =>
+      (msg.steps ?? [])
+        .filter((s): s is { type: string; contentText: string } =>
+          s !== null && s.type === 'text' && typeof s.contentText === 'string',
+        )
+        .map((s) => s.contentText),
+    ),
+  );
+  if (parts.length === 0) throw new Error(`No assistant text in transcript:\n${stdout}`);
+  return parts.join('\n');
+}
 
 describe('opencode-plugin-prompt-transformer live routing proof', () => {
   for (const { prompt, tier } of FAUX_RULES) {
-    it(`routes ${tier} prompts through the injected template`, async () => {
+    it(`routes ${tier} prompts through the injected template`, () => {
       const nonce = randomUUID();
       const promptWithNonce = `${prompt} After responding, also include this exact string: ${nonce}`;
-      const text = runOneShot(pluginServer!.baseUrl, promptWithNonce);
-      expect(text).toContain(ROUTING_PASSCODES[tier]);
-      expect(text).toContain(nonce);
-      expect(extractRoutedTier(text)).toBe(tier);
+      let sessionID: string | undefined;
+      try {
+        sessionID = beginSession(promptWithNonce);
+        waitIdle(sessionID);
+        const text = readFinalAssistantText(sessionID);
+        expect(text).toContain(ROUTING_PASSCODES[tier]);
+        expect(text).toContain(nonce);
+        expect(extractRoutedTier(text)).toBe(tier);
+      } finally {
+        if (sessionID) {
+          try { runOcm(['delete', sessionID]); } catch { /* best-effort */ }
+        }
+      }
     }, 200_000);
   }
 });
