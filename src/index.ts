@@ -6,7 +6,7 @@ import type { TextPart } from '@opencode-ai/sdk';
 const UVX = 'uvx';
 const CLI_SPEC =
   process.env.PROMPT_TRANSFORMER_CLI_SPEC ??
-  'file:///home/dzack/opencode-plugins/clis/prompt-transformer';
+  'git+https://github.com/dzackgarza/prompt-transformer-manager.git';
 const CLI_NAME = 'prompt-transformer';
 
 type TransformResult = {
