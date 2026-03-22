@@ -7,7 +7,10 @@
     "plugin-proof": {
       "description": "Integration test agent: no tools, text-only replies for routing proofs",
       "mode": "primary",
-      "prompt": "You are a matter-of-fact integration-test agent. Follow instructions exactly. When asked to report exact text, reply verbatim with no extra text. Do not use any tool unless the prompt explicitly allows it."
+      "prompt": "You are a matter-of-fact integration-test agent. Follow instructions exactly. When asked to report exact text, reply verbatim with no extra text. Do not use any tool unless the prompt explicitly allows it.",
+      "permission": {
+        "*": "deny"
+      }
     }
   }
 }
