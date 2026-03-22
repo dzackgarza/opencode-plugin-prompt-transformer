@@ -1,7 +1,7 @@
 import { spawnSync } from 'child_process';
 
 import type { Plugin } from '@opencode-ai/plugin';
-import type { TextPart } from '@opencode-ai/sdk';
+import type { Message, Part, TextPart } from '@opencode-ai/sdk';
 
 const UVX = 'uvx';
 const CLI_SPEC =
@@ -16,6 +16,11 @@ type TransformResult = {
   probe_prompt: string | null;
   instruction: string;
   transformed_prompt: string;
+};
+
+type MessageWithParts = {
+  info: Message;
+  parts: Part[];
 };
 
 function runTransform(prompt: string): TransformResult | null {
@@ -41,27 +46,33 @@ function runTransform(prompt: string): TransformResult | null {
   return payload;
 }
 
+function textParts(parts: Part[]): TextPart[] {
+  return parts.filter((part): part is TextPart => part.type === 'text');
+}
+
+function lastUserMessage(messages: MessageWithParts[]): MessageWithParts | undefined {
+  return [...messages].reverse().find((message) => message.info.role === 'user');
+}
+
 export const PromptRouter: Plugin = async ({ client }) => {
   return {
-    'chat.message': async (_input, output) => {
+    'experimental.chat.messages.transform': async (_input, output) => {
       try {
-        const text = output.parts
-          .filter((part): part is TextPart => part.type === 'text')
-          .map((part) => part.text)
-          .join(' ');
+        const message = lastUserMessage(output.messages);
+        if (!message) return;
+
+        const messageTextParts = textParts(message.parts);
+        const text = messageTextParts.map((part) => part.text).join(' ');
 
         const transform = runTransform(text);
         if (!transform) return;
 
-        const textParts = output.parts.filter(
-          (part): part is TextPart => part.type === 'text',
-        );
-        const firstTextPart = textParts[0];
+        const firstTextPart = messageTextParts[0];
         if (!firstTextPart) return;
 
         firstTextPart.text = transform.transformed_prompt;
         if (transform.probe_prompt) {
-          for (const part of textParts.slice(1)) {
+          for (const part of messageTextParts.slice(1)) {
             part.ignored = true;
           }
         }

@@ -1,6 +1,9 @@
 set fallback := true
 repo_root := justfile_directory()
 
+default:
+  @just test
+
 justfile-hygiene:
   #!/usr/bin/env bash
   set -euo pipefail
@@ -12,23 +15,22 @@ justfile-hygiene:
 install: justfile-hygiene
   direnv exec "{{repo_root}}" bun install
 
-typecheck: justfile-hygiene
+[private]
+_typecheck: justfile-hygiene
   direnv exec "{{repo_root}}" bunx tsc --noEmit
 
-test: justfile-hygiene
+[private]
+_quality-control: justfile-hygiene
   #!/usr/bin/env bash
   set -euo pipefail
-  root_justfile="{{repo_root}}/../../justfile"
+  cd "{{repo_root}}"
+  exec direnv exec "{{repo_root}}" bun test tests/integration
 
-  cleanup() {
-    just -f "$root_justfile" test-sandbox-down 2>/dev/null || true
-  }
-  trap cleanup EXIT
+typecheck: justfile-hygiene _typecheck
 
-  just -f "$root_justfile" test-sandbox-up "{{repo_root}}/tests/integration/opencode.json" "{{repo_root}}/.envrc"
-  direnv exec "{{repo_root}}" bun test tests/integration
+check: test
 
-check: justfile-hygiene typecheck test
+test: justfile-hygiene _typecheck _quality-control
 
 # Setup npm trusted publisher (one-time manual setup)
 setup-npm-trust:
@@ -58,4 +60,3 @@ bump-minor:
 # Push commits and tags to trigger CI release
 release: check
     git push && git push --tags
-

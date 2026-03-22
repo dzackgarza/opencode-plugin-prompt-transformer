@@ -21,7 +21,7 @@ cd ./opencode-plugin-prompt-transformer
 just install
 ```
 
-Repo-local verification uses [`.envrc`](./.envrc), [`.config/opencode.json`](./.config/opencode.json), and a checked-in symlink under [`.config/plugins`](./.config/plugins) so OpenCode loads the real exporter without a machine-specific `file://` path.
+Repo-root [`opencode.json`](./opencode.json) is the canonical proof config for this repo. CI starts `opencode serve` from the repo root and relies on standard global-plus-project config precedence.
 
 **MCP**: None. This package provides a chat-transform hook rather than a tool server.
 
@@ -66,6 +66,9 @@ uvx --from git+https://github.com/dzackgarza/llm-templating-engine.git llm-templ
 Run checks with just:
 
 ```bash
+direnv allow .
 just typecheck
 just test
 ```
+
+CI is the canonical proof environment. For local debugging, start a repo-local OpenCode server from this checkout, set `OPENCODE_BASE_URL`, and then run the same `just` entrypoints.
