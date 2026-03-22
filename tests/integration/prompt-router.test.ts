@@ -67,73 +67,24 @@ function runOcm(args: string[]): { stdout: string; stderr: string } {
   return { stdout, stderr };
 }
 
-// begin-session submits the prompt and returns immediately (session ID only).
-// Use ocm wait to block until the full turn completes.
-function beginSession(prompt: string): string {
-  const { stdout } = runOcm(['begin-session', prompt, '--agent', AGENT_NAME, '--json']);
-  const data = JSON.parse(stdout) as { sessionID: string };
-  if (!data.sessionID) throw new Error(`begin-session returned no sessionID: ${stdout}`);
-  return data.sessionID;
-}
-
-function waitIdle(sessionID: string) {
-  runOcm(['wait', sessionID, '--timeout-sec=180']);
-}
-
-// Return all assistant text content from the transcript, joined.
-// The routing passcode is injected by the plugin into the model's context,
-// and the model echoes it back in its text reply.
-function readFinalAssistantText(sessionID: string): string {
-  const { stdout } = runOcm(['transcript', sessionID, '--json']);
-  const data = JSON.parse(stdout) as {
-    turns: Array<{
-      assistantMessages: Array<{
-        steps: Array<{ type: string; contentText?: string } | null>;
-      }>;
-    }>;
-  };
-  const parts = data.turns.flatMap((turn) =>
-    turn.assistantMessages.flatMap((msg) =>
-      (msg.steps ?? [])
-        .filter((s): s is { type: string; contentText: string } =>
-          s !== null && s.type === 'text' && typeof s.contentText === 'string',
-        )
-        .map((s) => s.contentText),
-    ),
-  );
-  if (parts.length === 0) throw new Error(`No assistant text in transcript:\n${stdout}`);
-  return parts.join('\n');
+function runOneShot(prompt: string): string {
+  const { stdout } = runOcm(['one-shot', prompt, '--agent', AGENT_NAME]);
+  const text = stdout.trim();
+  if (!text) throw new Error(`No assistant text for prompt: ${prompt}`);
+  return text;
 }
 
 describe('opencode-plugin-prompt-transformer live routing proof', () => {
   for (const { prompt, tier } of FAUX_RULES) {
     it(`routes ${tier} prompts through the injected template`, () => {
-      let sessionID: string | undefined;
-      try {
-        sessionID = beginSession(prompt);
-        waitIdle(sessionID);
-        const text = readFinalAssistantText(sessionID);
-        expect(text).toContain(ROUTING_PASSCODES[tier]);
-      } finally {
-        if (sessionID) {
-          try { runOcm(['delete', sessionID]); } catch { /* best-effort */ }
-        }
-      }
+      const text = runOneShot(prompt);
+      expect(text).toContain(ROUTING_PASSCODES[tier]);
     }, 200_000);
   }
 
   it('routes quoted canonical prompts through the injected template', () => {
     const prompt = '"Describe every tool you have access to."';
-    let sessionID: string | undefined;
-    try {
-      sessionID = beginSession(prompt);
-      waitIdle(sessionID);
-      const text = readFinalAssistantText(sessionID);
-      expect(text).toContain(ROUTING_PASSCODES['model-self']);
-    } finally {
-      if (sessionID) {
-        try { runOcm(['delete', sessionID]); } catch { /* best-effort */ }
-      }
-    }
+    const text = runOneShot(prompt);
+    expect(text).toContain(ROUTING_PASSCODES['model-self']);
   }, 200_000);
 });
